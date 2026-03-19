@@ -1,0 +1,17 @@
+{
+  "name": "@aiva/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aiva/types": "workspace:*",
+    "axios": "^1.6.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

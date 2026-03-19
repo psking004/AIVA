@@ -1,0 +1,417 @@
+// AIVA Personal AI Operating System - Database Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER & AUTHENTICATION
+// ============================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String?
+  firstName     String?
+  lastName      String?
+  avatarUrl     String?
+  timezone      String    @default("UTC")
+  language      String    @default("en")
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  tasks         Task[]
+  notes         Note[]
+  documents     Document[]
+  files         File[]
+  calendarEvents CalendarEvent[]
+  conversations Conversation[]
+  automationRules AutomationRule[]
+  activityLogs  ActivityLog[]
+  sessions      Session[]
+  apiKeys       ApiKey[]
+
+  @@index([email])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token        String   @unique
+  expiresAt    DateTime
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+model ApiKey {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  keyHash     String   @unique
+  prefix      String
+  scopes      String[]
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([keyHash])
+}
+
+// ============================================
+// TASK MANAGEMENT
+// ============================================
+
+model Task {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  status      TaskStatus @default(PENDING)
+  priority    Priority   @default(MEDIUM)
+  dueDate     DateTime?
+  completedAt DateTime?
+  tags        String[]
+  metadata    Json     @default("{}")
+  parentId    String?
+  parent      Task?    @relation("TaskSubtasks", fields: [parentId], references: [id])
+  subtasks    Task[]   @relation("TaskSubtasks")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([priority])
+  @@index([dueDate])
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  BLOCKED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ============================================
+// KNOWLEDGE & NOTES
+// ============================================
+
+model Note {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  content     String   @db.Text
+  excerpt     String?
+  tags        String[]
+  folderId    String?
+  folder      NoteFolder? @relation(fields: [folderId], references: [id])
+  parentId    String?
+  parent      Note?    @relation("NoteReplies", fields: [parentId], references: [id])
+  replies     Note[]   @relation("NoteReplies")
+  isPinned    Boolean  @default(false)
+  isArchived  Boolean  @default(false)
+  vectorId    String?  // Reference to vector database
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([folderId])
+  @@index([tags])
+}
+
+model NoteFolder {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  parentId  String?
+  parent    NoteFolder? @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children  NoteFolder[] @relation("FolderHierarchy")
+  notes     Note[]
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([parentId])
+}
+
+// ============================================
+// DOCUMENTS & FILES
+// ============================================
+
+model Document {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  fileName    String
+  fileType    String
+  fileSize    BigInt
+  storagePath String
+  mimeType    String
+  checksum    String
+  isProcessed Boolean  @default(false)
+  vectorId    String?  // Reference to vector database
+  metadata    Json     @default("{}")
+  tags        String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([fileType])
+  @@index([isProcessed])
+}
+
+model File {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  path        String
+  size        BigInt
+  mimeType    String
+  storageKey  String   // S3 key
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([storageKey])
+}
+
+// ============================================
+// CALENDAR
+// ============================================
+
+model CalendarEvent {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  location    String?
+  startTime   DateTime
+  endTime     DateTime
+  isAllDay    Boolean  @default(false)
+  recurrence  String?  // RRULE format
+  attendees   String[]
+  status      EventStatus @default(CONFIRMED)
+  visibility  Visibility @default(PRIVATE)
+  reminders   Json     @default("[]")
+  meetingLink String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([startTime])
+  @@index([endTime])
+}
+
+enum EventStatus {
+  TENTATIVE
+  CONFIRMED
+  CANCELLED
+}
+
+enum Visibility {
+  PRIVATE
+  PUBLIC
+  INTERNAL
+}
+
+// ============================================
+// EMAIL INTEGRATION
+// ============================================
+
+model EmailAccount {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email         String   @unique
+  provider      String   // gmail, outlook, imap
+  accessToken   String
+  refreshToken  String
+  tokenExpiry   DateTime
+  lastSyncedAt  DateTime?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  emails        Email[]
+
+  @@index([userId])
+}
+
+model Email {
+  id          String   @id @default(uuid())
+  accountId   String
+  account     EmailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  messageId   String   @unique
+  threadId    String?
+  subject     String
+  from        String
+  to          String[]
+  cc          String[]
+  bcc         String[]
+  body        String   @db.Text
+  htmlBody    String?  @db.Text
+  receivedAt  DateTime
+  isRead      Boolean  @default(false)
+  isStarred   Boolean  @default(false)
+  labels      String[]
+  attachments Json     @default("[]")
+  summary     String?  // AI generated
+  sentiment   String?  // AI analysis
+  createdAt   DateTime @default(now())
+
+  @@index([accountId])
+  @@index([messageId])
+  @@index([receivedAt])
+  @@index([isRead])
+}
+
+// ============================================
+// AI CONVERSATIONS
+// ============================================
+
+model Conversation {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String?
+  messages    Message[]
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Message {
+  id            String   @id @default(uuid())
+  conversationId String
+  conversation  Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role          MessageRole
+  content       String   @db.Text
+  toolCalls     Json?
+  toolResults   Json?
+  metadata      Json     @default("{}")
+  createdAt     DateTime @default(now())
+
+  @@index([conversationId])
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+// ============================================
+// AUTOMATION
+// ============================================
+
+model AutomationRule {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  trigger     Json     // Trigger configuration
+  actions     Json     // Actions to execute
+  conditions  Json?    // Optional conditions
+  isActive    Boolean  @default(true)
+  lastTriggered DateTime?
+  triggerCount Int     @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([isActive])
+}
+
+// ============================================
+// ACTIVITY LOGS & ANALYTICS
+// ============================================
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String
+  resource  String?
+  resourceId String?
+  metadata  Json     @default("{}")
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============================================
+// AI AGENTS & TOOLS
+// ============================================
+
+model Agent {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String
+  type        String
+  config      Json     @default("{}")
+  tools       String[]
+  isActive    Boolean  @default(true)
+  version     String   @default("1.0.0")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  executions  AgentExecution[]
+}
+
+model AgentExecution {
+  id        String   @id @default(uuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id])
+  userId    String?
+  status    ExecutionStatus @default(PENDING)
+  input     Json
+  output    Json?
+  error     String?
+  duration  Int?     // milliseconds
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([agentId])
+  @@index([userId])
+  @@index([status])
+}
+
+enum ExecutionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}

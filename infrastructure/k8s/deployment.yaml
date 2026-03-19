@@ -1,0 +1,164 @@
+# Kubernetes Deployment Configuration for AIVA
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiva-backend
+  labels:
+    app: aiva
+    component: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: aiva
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: aiva
+        component: backend
+    spec:
+      containers:
+      - name: backend
+        image: aiva-backend:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 4000
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: aiva-secrets
+              key: database-url
+        - name: REDIS_HOST
+          value: "aiva-redis"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: aiva-secrets
+              key: jwt-secret
+        - name: ANTHROPIC_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aiva-secrets
+              key: anthropic-api-key
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 4000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 4000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: logs
+        emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiva-web
+  labels:
+    app: aiva
+    component: web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aiva
+      component: web
+  template:
+    metadata:
+      labels:
+        app: aiva
+        component: web
+    spec:
+      containers:
+      - name: web
+        image: aiva-web:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+        env:
+        - name: AIVA_API_URL
+          value: "http://aiva-backend:4000"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiva-backend
+  labels:
+    app: aiva
+    component: backend
+spec:
+  ports:
+  - port: 4000
+    targetPort: 4000
+  selector:
+    app: aiva
+    component: backend
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aiva-web
+  labels:
+    app: aiva
+    component: web
+spec:
+  ports:
+  - port: 80
+    targetPort: 3000
+  selector:
+    app: aiva
+    component: web
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aiva-secrets
+type: Opaque
+stringData:
+  database-url: postgresql://aiva:password@postgres:5432/aiva
+  jwt-secret: change-this-to-secure-random-string
+  anthropic-api-key: your-api-key
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aiva-config
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  RATE_LIMIT_MAX: "100"
+  RATE_LIMIT_TTL: "60000"

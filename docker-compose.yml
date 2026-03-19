@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: aiva-postgres
+    environment:
+      POSTGRES_USER: aiva
+      POSTGRES_PASSWORD: aiva-secret
+      POSTGRES_DB: aiva
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiva"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: aiva-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aiva-backend
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://aiva:aiva-secret@postgres:5432/aiva
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: aiva-jwt-secret-key-change-in-production
+      CORS_ORIGIN: http://localhost:3000
+      PORT: 4000
+      # AI Configuration
+      AI_PROVIDER: anthropic
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AI_MODEL: claude-sonnet-4-5-20250929
+      AI_TEMPERATURE: 0.7
+      AI_MAX_TOKENS: 4096
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: sh -c "pnpm db:generate && pnpm db:migrate && pnpm dev"
+
+  # Frontend Web
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: aiva-web
+    environment:
+      AIVA_API_URL: http://localhost:4000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    command: pnpm dev
+
+volumes:
+  postgres_data:
+  redis_data:
