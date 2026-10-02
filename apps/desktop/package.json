@@ -1,0 +1,57 @@
+{
+  "name": "@aiva/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "dev:renderer": "vite",
+    "build:renderer": "vite build",
+    "build": "pnpm build:renderer",
+    "package:win": "pnpm build:renderer && electron-builder --win",
+    "build:mac": "pnpm build:renderer && electron-builder --mac",
+    "build:linux": "pnpm build:renderer && electron-builder --linux"
+  },
+  "dependencies": {
+    "@aiva/api-client": "workspace:*",
+    "@aiva/types": "workspace:*",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^29.0.0",
+    "electron-builder": "^24.13.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.1"
+  },
+  "build": {
+    "appId": "com.aiva.desktop",
+    "productName": "AIVA",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png",
+      "category": "Utility"
+    }
+  }
+}

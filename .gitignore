@@ -1,0 +1,50 @@
+# Secrets / environment
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!.env.*.example
+!**/.env.*.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+.next/
+**/.next/
+
+# Turborepo
+.turbo/
+**/.turbo/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Logs
+logs/
+**/logs/
+*.log
+pnpm-err.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local files
+*.local
+
+# Runtime data
+backend/storage/uploads/
+storage/uploads/
+backend/data/long_term_memory.json
+backend/data/rag_vectors.json

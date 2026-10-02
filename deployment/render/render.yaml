@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: aiva-private-backend
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @aiva/backend build
+    startCommand: pnpm --filter @aiva/backend start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false # Set from Supabase Transaction Pooler (Port 6543, pgbouncer=true)
+      - key: DIRECT_URL
+        sync: false # Set from Supabase Direct Connection (Port 5432)
+      - key: REDIS_URL
+        sync: false # Set from Upstash Redis URL (rediss://...)
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: OPENROUTER_API_KEY
+        sync: false # Set your OpenRouter API Key
+      - key: OPENROUTER_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: OPENROUTER_MODEL
+        value: qwen/qwen-2.5-72b-instruct
+      - key: GEMINI_API_KEY
+        sync: false # Set your Google Gemini API Key
+      - key: GEMINI_MODEL
+        value: gemini-1.5-flash
+      - key: AIVA_ROUTING_STRATEGY
+        value: cloud-first # Cloud backend operates independently of Windows PC
+      - key: AIVA_CLOUD_PROVIDER
+        value: openrouter
+      - key: AIVA_CLOUD_ENABLED
+        value: "true"
+      - key: CORS_ORIGIN
+        sync: false # Set to your deployed frontend origin (e.g., https://your-aiva-app.com)
