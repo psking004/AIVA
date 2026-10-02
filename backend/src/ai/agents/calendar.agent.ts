@@ -9,6 +9,7 @@
  */
 
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { CalendarEvent } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { AIVAService } from '../aiva.service';
 
@@ -140,7 +141,7 @@ export class CalendarAgent {
       orderBy: { startTime: 'asc' },
     });
 
-    const eventList = events.map((e, i) => `${i + 1}. ${e.title} - ${e.startTime.toLocaleString()}`).join('\n');
+    const eventList = events.map((e: CalendarEvent, i: number) => `${i + 1}. ${e.title} - ${e.startTime.toLocaleString()}`).join('\n');
 
     return {
       success: true,

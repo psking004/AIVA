@@ -9,6 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
+import { Message } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { RedisService } from '../../cache/redis.service';
 
@@ -71,7 +72,7 @@ export class MemoryService {
     });
 
     return {
-      messages: messages.map((m) => ({
+      messages: messages.map((m: Message) => ({
         role: m.role.toLowerCase(),
         content: m.content,
         metadata: (m.metadata || {}) as any,

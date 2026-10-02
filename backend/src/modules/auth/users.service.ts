@@ -67,7 +67,7 @@ export class UsersService {
     ]);
 
     return {
-      tasks: taskStats.reduce((acc, s) => ({ ...acc, [s.status]: s._count }), {}),
+      tasks: taskStats.reduce((acc: Record<string, number>, s: { status: string; _count: number }) => ({ ...acc, [s.status]: s._count }), {}),
       notes: noteStats,
       documents: documentStats,
       upcomingEvents: eventStats,

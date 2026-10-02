@@ -9,6 +9,7 @@
  */
 
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { AutomationRule } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { AIVAService } from '../aiva.service';
 
@@ -135,7 +136,7 @@ export class AutomationAgent {
       orderBy: { createdAt: 'desc' },
     });
 
-    const ruleList = rules.map((r, i) => `${i + 1}. ${r.name} (${r.triggerCount} triggered)`).join('\n');
+    const ruleList = rules.map((r: AutomationRule, i: number) => `${i + 1}. ${r.name} (${r.triggerCount} triggered)`).join('\n');
 
     return {
       success: true,

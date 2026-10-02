@@ -9,6 +9,7 @@
  */
 
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Document } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { AIVAService } from '../aiva.service';
 import { RAGService } from '../memory/rag.service';
@@ -178,7 +179,7 @@ export class ResearchAgent {
     }
 
     // Compare using AI
-    const docText = documents.map((d, i) => `${i + 1}. ${d.title}: ${JSON.stringify(d.metadata)}`).join('\n');
+    const docText = documents.map((d: Document, i: number) => `${i + 1}. ${d.title}: ${JSON.stringify(d.metadata)}`).join('\n');
 
     const comparison = await this.aiva.executeTool(userId, 'summarize', {
       content: `Compare these documents and highlight key similarities and differences:\n\n${docText}`,

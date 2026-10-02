@@ -74,7 +74,7 @@ export class AnalyticsService {
       recentConversations: conversations,
       recentActivity: activity,
       stats: {
-        tasks: taskStats.reduce((acc, s) => ({ ...acc, [s.status]: s._count }), {}),
+        tasks: taskStats.reduce((acc: Record<string, number>, s: { status: string; _count: number }) => ({ ...acc, [s.status]: s._count }), {}),
         totalNotes: await this.prisma.note.count({ where: { userId, isArchived: false } }),
         totalDocuments: await this.prisma.document.count({ where: { userId } }),
         totalConversations: await this.prisma.conversation.count({ where: { userId } }),
@@ -97,7 +97,7 @@ export class AnalyticsService {
     return {
       period: `${days} days`,
       activity,
-      totalActions: activity.reduce((sum, a) => sum + a._count, 0),
+      totalActions: activity.reduce((sum: number, a: { _count: number }) => sum + a._count, 0),
     };
   }
 

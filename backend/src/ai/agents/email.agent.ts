@@ -9,6 +9,7 @@
  */
 
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Email } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { AIVAService } from '../aiva.service';
 
@@ -79,7 +80,7 @@ export class EmailAgent {
     });
 
     // Summarize using AI
-    const emailText = emails.map((e, i) => `${i + 1}. From: ${e.from}, Subject: ${e.subject}`).join('\n');
+    const emailText = emails.map((e: Email, i: number) => `${i + 1}. From: ${e.from}, Subject: ${e.subject}`).join('\n');
 
     const summary = await this.aiva.summarize(userId, emailText, 'email list');
 
@@ -189,7 +190,7 @@ export class EmailAgent {
       take: limit,
     });
 
-    const emailList = emails.map((e, i) => `${i + 1}. ${e.from} - ${e.subject} (${e.receivedAt.toLocaleDateString()})`).join('\n');
+    const emailList = emails.map((e: Email, i: number) => `${i + 1}. ${e.from} - ${e.subject} (${e.receivedAt.toLocaleDateString()})`).join('\n');
 
     return {
       success: true,

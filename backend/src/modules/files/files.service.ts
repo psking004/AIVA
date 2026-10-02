@@ -3,6 +3,7 @@
  */
 
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Document } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { RAGService } from '../../ai/memory/rag.service';
 import * as fs from 'fs';
@@ -89,7 +90,7 @@ export class FilesService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return docs.map((d) => this.serializeDocument(d));
+    return docs.map((d: Document) => this.serializeDocument(d));
   }
 
   async findOne(userId: string, id: string) {
@@ -130,10 +131,10 @@ export class FilesService {
       },
     });
 
-    return docs.map((d) => this.serializeDocument(d));
+    return docs.map((d: Document) => this.serializeDocument(d));
   }
 
-  private serializeDocument(doc: any) {
+  private serializeDocument(doc: Document | null) {
     if (!doc) return null;
     return {
       ...doc,

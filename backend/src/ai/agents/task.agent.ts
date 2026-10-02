@@ -9,6 +9,7 @@
  */
 
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Task } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { AIVAService } from '../aiva.service';
 
@@ -140,7 +141,7 @@ export class TaskAgent {
       take: limit,
     });
 
-    const taskList = tasks.map((t, i) => `${i + 1}. ${t.title} (${t.priority})`).join('\n');
+    const taskList = tasks.map((t: Task, i: number) => `${i + 1}. ${t.title} (${t.priority})`).join('\n');
 
     return {
       success: true,
@@ -163,7 +164,7 @@ export class TaskAgent {
     });
 
     // Use AI to prioritize
-    const taskText = tasks.map((t, i) => `${i + 1}. ${t.title} - ${t.description || 'No description'}`).join('\n');
+    const taskText = tasks.map((t: Task, i: number) => `${i + 1}. ${t.title} - ${t.description || 'No description'}`).join('\n');
 
     const prompt = `Analyze these tasks and suggest priority order (1=highest priority):
     Consider: urgency, importance, dependencies, deadlines.
