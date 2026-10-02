@@ -1,0 +1,28 @@
+# Dependencies and cache
+node_modules
+.pnpm-store
+.turbo
+.next
+dist
+renderer
+build
+coverage
+
+# Version control and editor
+.git
+.github
+.vscode
+.idea
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Runtime and local storage data
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+backend/data/*.json
+logs
+*.log

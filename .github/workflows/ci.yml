@@ -74,6 +74,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build backend Docker image
-        run: docker build -t aiva-backend ./backend
+        run: docker build -t aiva-backend -f backend/Dockerfile .
       - name: Build web Docker image
-        run: docker build -t aiva-web ./apps/web
+        run: docker build -t aiva-web -f apps/web/Dockerfile .
