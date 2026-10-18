@@ -2,7 +2,7 @@
  * TasksService - Task CRUD operations
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { TaskStatus, Priority } from '@prisma/client';
 
@@ -44,15 +44,23 @@ export class TasksService {
   }
 
   async update(userId: string, id: string, data: UpdateTaskDto) {
+    const existing = await this.prisma.task.findFirst({ where: { id, userId } });
+    if (!existing) {
+      throw new NotFoundException('Task not found');
+    }
     return this.prisma.task.update({
-      where: { id, userId },
+      where: { id },
       data,
     });
   }
 
   async remove(userId: string, id: string) {
+    const existing = await this.prisma.task.findFirst({ where: { id, userId } });
+    if (!existing) {
+      throw new NotFoundException('Task not found');
+    }
     return this.prisma.task.delete({
-      where: { id, userId },
+      where: { id },
     });
   }
 
