@@ -13,6 +13,7 @@ import {
   UseGuards,
   UnauthorizedException,
   InternalServerErrorException,
+  HttpException,
   Request,
 } from '@nestjs/common';
 import {
@@ -108,8 +109,8 @@ export class AuthController {
       const { email, password, device } = body;
       return await this.authService.login(email, password, device);
     } catch (err: any) {
-      if (err instanceof UnauthorizedException || err.status) throw err;
-      throw new InternalServerErrorException(err.message || 'Login failed');
+      if (err instanceof UnauthorizedException || err.status === 401 || err.statusCode === 401) throw err;
+      throw new HttpException({ error: 'AuthError', message: err.message || 'Login failed', details: err.toString() }, err.status || err.statusCode || 500);
     }
   }
 
