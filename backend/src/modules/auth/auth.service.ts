@@ -159,6 +159,7 @@ export class AuthService {
       const updated = await this.prisma.device.update({
         where: { deviceId },
         data: {
+          userId,
           deviceName,
           platform,
           lastSeenAt: new Date(),

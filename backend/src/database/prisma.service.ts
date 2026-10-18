@@ -17,6 +17,11 @@ function getDatabaseUrl(): string | undefined {
   return url;
 }
 
+const configuredUrl = getDatabaseUrl();
+if (configuredUrl) {
+  process.env.DATABASE_URL = configuredUrl;
+}
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
