@@ -4,8 +4,8 @@
  * Architecture: NestJS + Fastify + AI Orchestration Layer
  */
 
-// Patch Supabase PgBouncer pooler URL before any module or PrismaClient initializes
-if (process.env.DATABASE_URL && (process.env.DATABASE_URL.includes(':6543') || process.env.DATABASE_URL.includes('pooler') || process.env.DATABASE_URL.includes('supabase'))) {
+// Patch DATABASE_URL with pgbouncer and statement_cache_size=0 unconditionally to prevent prepared statement collisions
+if (process.env.DATABASE_URL) {
   if (!process.env.DATABASE_URL.includes('pgbouncer=true')) {
     const sep = process.env.DATABASE_URL.includes('?') ? '&' : '?';
     process.env.DATABASE_URL = `${process.env.DATABASE_URL}${sep}pgbouncer=true`;
@@ -25,14 +25,38 @@ import helmet from 'helmet';
 import compression from 'compression';
 import { AppModule } from './app.module';
 import { Logger } from './utils/logger';
+import { AllExceptionsFilter } from './utils/all-exceptions.filter';
+
+function logEnvVerification() {
+  const envVars = [
+    'OPENROUTER_API_KEY',
+    'OPENROUTER_MODEL',
+    'GEMINI_API_KEY',
+    'GEMINI_MODEL',
+    'DATABASE_URL',
+    'DIRECT_URL',
+    'JWT_SECRET',
+    'JWT_REFRESH_SECRET',
+  ];
+
+  console.log('[AIVA ENV VERIFICATION]');
+  for (const envVar of envVars) {
+    const isPresent = !!process.env[envVar] && process.env[envVar]!.trim().length > 0;
+    console.log(`${envVar}: ${isPresent ? 'PRESENT' : 'MISSING'}`);
+  }
+}
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
+  logEnvVerification();
 
   // Create NestJS application with Fastify for better performance
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
   });
+
+  // Global exception filter for rich diagnostics and unmasked server-side error logging
+  app.useGlobalFilters(new AllExceptionsFilter());
 
   const configService = app.get(ConfigService);
 

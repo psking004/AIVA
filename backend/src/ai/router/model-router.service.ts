@@ -27,6 +27,7 @@ import {
   ProviderResponse,
   ProviderHealth,
 } from '../providers/ai-provider.interface';
+import { AivaBackendTrace } from '../ai-backend-trace';
 
 export type RoutingStrategy =
   | 'local-first'
@@ -201,6 +202,7 @@ export class ModelRouterService implements OnModuleInit {
   async chat(
     messages: AIMessage[],
     options?: CompletionOptions,
+    trace?: AivaBackendTrace,
   ): Promise<ProviderResponse> {
     const mergedOptions: CompletionOptions = {
       ...options,
@@ -211,23 +213,23 @@ export class ModelRouterService implements OnModuleInit {
 
     switch (strategy) {
       case 'local-only':
-        return this.executeProvider(this.ollamaProvider, messages, mergedOptions);
+        return this.executeProvider(this.ollamaProvider, messages, mergedOptions, trace);
 
       case 'openrouter-only':
         this.checkCloudQuota();
-        return this.executeProvider(this.openRouterProvider, messages, mergedOptions);
+        return this.executeProvider(this.openRouterProvider, messages, mergedOptions, trace);
 
       case 'gemini-only':
         this.checkCloudQuota();
-        return this.executeProvider(this.geminiProvider, messages, mergedOptions);
+        return this.executeProvider(this.geminiProvider, messages, mergedOptions, trace);
 
       case 'cloud-first':
-        return this.executeCloudFirst(messages, mergedOptions);
+        return this.executeCloudFirst(messages, mergedOptions, trace);
 
       case 'local-first':
       case 'auto':
       default:
-        return this.executeLocalFirst(messages, mergedOptions);
+        return this.executeLocalFirst(messages, mergedOptions, trace);
     }
   }
 
@@ -237,8 +239,9 @@ export class ModelRouterService implements OnModuleInit {
   async complete(
     prompt: string,
     options?: CompletionOptions,
+    trace?: AivaBackendTrace,
   ): Promise<ProviderResponse> {
-    return this.chat([{ role: 'user', content: prompt }], options);
+    return this.chat([{ role: 'user', content: prompt }], options, trace);
   }
 
   /**
@@ -293,13 +296,35 @@ export class ModelRouterService implements OnModuleInit {
     provider: AIProvider,
     messages: AIMessage[],
     options: CompletionOptions,
+    trace?: AivaBackendTrace,
   ): Promise<ProviderResponse> {
+    const started = Date.now();
+    if (trace) {
+      trace.provider_selected = provider.name;
+      trace.provider_request_started = started;
+    }
     try {
       const res = await provider.chat(messages, options);
+      const latency = Date.now() - started;
       this.recordSuccess(provider.name);
+      if (trace) {
+        trace.provider_selected = provider.name;
+        trace.model_selected = res.model || 'unknown';
+        trace.provider_response_status = 200;
+        trace.provider_latency = latency;
+        trace.provider_response_valid = !!res.content && res.content.length > 0;
+      }
       return res;
     } catch (error: any) {
       this.recordFailure(provider.name);
+      if (trace) {
+        trace.provider_response_status = error.status || error.statusCode || 500;
+        trace.provider_latency = Date.now() - started;
+        trace.provider_response_valid = false;
+        trace.failure_stage = `provider_${provider.name}`;
+        trace.failure_type = error.name || 'ProviderError';
+        trace.failure_message = error.message;
+      }
       throw error;
     }
   }
@@ -307,16 +332,14 @@ export class ModelRouterService implements OnModuleInit {
   private async executeLocalFirst(
     messages: AIMessage[],
     options: CompletionOptions,
+    trace?: AivaBackendTrace,
   ): Promise<ProviderResponse> {
     // 1. Try local Ollama if not circuit-broken
     if (!this.isCircuitOpen(this.ollamaProvider.name)) {
       try {
         this.logger.debug('Routing request to Local Ollama Qwen3 8B...');
-        const response = await this.ollamaProvider.chat(messages, options);
-        this.recordSuccess(this.ollamaProvider.name);
-        return response;
+        return await this.executeProvider(this.ollamaProvider, messages, options, trace);
       } catch (localError: any) {
-        this.recordFailure(this.ollamaProvider.name);
         this.logger.warn(
           `Local Ollama unavailable or failed (${localError.message}). Seamlessly routing to cloud...`,
         );
@@ -326,21 +349,20 @@ export class ModelRouterService implements OnModuleInit {
     }
 
     // 2. Fall back to Cloud Providers
-    return this.executeCloudFallback(messages, options);
+    return this.executeCloudFallback(messages, options, trace);
   }
 
   private async executeCloudFirst(
     messages: AIMessage[],
     options: CompletionOptions,
+    trace?: AivaBackendTrace,
   ): Promise<ProviderResponse> {
     try {
-      return await this.executeCloudFallback(messages, options);
+      return await this.executeCloudFallback(messages, options, trace);
     } catch (cloudError: any) {
       this.logger.warn(`Cloud providers failed (${cloudError.message}). Falling back to Local Ollama...`);
       try {
-        const res = await this.ollamaProvider.chat(messages, options);
-        this.recordSuccess(this.ollamaProvider.name);
-        return res;
+        return await this.executeProvider(this.ollamaProvider, messages, options, trace);
       } catch (localError: any) {
         throw new Error(
           `All AI providers failed. Cloud error: "${cloudError.message}", Local Ollama error: "${localError.message}".`,
@@ -352,6 +374,7 @@ export class ModelRouterService implements OnModuleInit {
   private async executeCloudFallback(
     messages: AIMessage[],
     options: CompletionOptions,
+    trace?: AivaBackendTrace,
   ): Promise<ProviderResponse> {
     this.checkCloudQuota();
     const cloudProviders = this.getCloudProvidersOrder();
@@ -365,11 +388,8 @@ export class ModelRouterService implements OnModuleInit {
 
       try {
         this.logger.debug(`Attempting cloud inference with provider: ${provider.name}`);
-        const response = await provider.chat(messages, options);
-        this.recordSuccess(provider.name);
-        return response;
+        return await this.executeProvider(provider, messages, options, trace);
       } catch (error: any) {
-        this.recordFailure(provider.name);
         this.logger.warn(`Provider ${provider.name} failed: ${error.message}`);
         errors.push(`${provider.name}: ${error.message}`);
       }

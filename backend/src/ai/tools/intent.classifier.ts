@@ -145,7 +145,8 @@ export class IntentClassifier {
 
     // Task parameters
     if (agentType === 'task') {
-      params.action = 'create';
+      const isList = /show|list|get|pending|what are|view|my tasks/i.test(message) && !/create|add|new|remind me to|schedule task/i.test(message);
+      params.action = isList ? 'list' : 'create';
 
       // Extract priority
       const priorityMatch = message.match(/(?:urgent|high priority|asap)/i);

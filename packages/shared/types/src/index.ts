@@ -271,3 +271,9 @@ export interface AuthResponse {
   user: User;
   token: string;
 }
+
+// AIVA Cross-Platform Engine Types & Logic
+export * from './aiva-engine';
+export * from './aiva-core';
+export * from './aiva-router';
+

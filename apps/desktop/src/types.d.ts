@@ -4,6 +4,7 @@ export interface IElectronAPI {
   minimizeWindow: () => Promise<void>;
   maximizeWindow: () => Promise<void>;
   closeWindow: () => Promise<void>;
+  setIgnoreMouseEvents?: (ignore: boolean, options?: { forward: boolean }) => Promise<void>;
   platform: string;
   sendNotification: (title: string, body: string) => void;
 }

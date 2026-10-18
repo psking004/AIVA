@@ -49,8 +49,19 @@ export class AIController {
    */
   @Post('chat')
   async chat(@Request() req: any, @Body() body: ChatRequestDto) {
-    const userId = req.user.id;
-    return this.aivaService.chat(userId, body.message, body.conversationId);
+    const userId = req.user?.id;
+    const deviceId = req.deviceId || req.headers?.['x-device-id'] || 'none';
+    const requestId =
+      (req.headers?.['x-request-id'] as string) ||
+      `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    return this.aivaService.chat(userId, body.message, body.conversationId, {
+      requestId,
+      authenticated: !!req.user,
+      deviceAuthorized: !!req.deviceId || deviceId !== 'none',
+      route: '/ai/chat',
+      mode: body.options?.strategy || 'default',
+    });
   }
 
   /**

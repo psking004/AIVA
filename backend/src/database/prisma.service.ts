@@ -8,16 +8,13 @@ import { PrismaClient } from '@prisma/client';
 function getDatabaseUrl(): string | undefined {
   let url = process.env.DATABASE_URL;
   if (!url) return undefined;
-  if (url.includes(':6543') || url.includes('pooler') || url.includes('supabase')) {
-    if (!url.includes('pgbouncer=true')) {
-      const sep = url.includes('?') ? '&' : '?';
-      url = `${url}${sep}pgbouncer=true`;
-    }
-    if (!url.includes('statement_cache_size=0')) {
-      const sep = url.includes('?') ? '&' : '?';
-      url = `${url}${sep}statement_cache_size=0`;
-    }
-    return url;
+  if (!url.includes('pgbouncer=true')) {
+    const sep = url.includes('?') ? '&' : '?';
+    url = `${url}${sep}pgbouncer=true`;
+  }
+  if (!url.includes('statement_cache_size=0')) {
+    const sep = url.includes('?') ? '&' : '?';
+    url = `${url}${sep}statement_cache_size=0`;
   }
   return url;
 }

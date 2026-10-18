@@ -21,6 +21,11 @@ import { IntentClassifier, ClassifiedIntent } from './tools/intent.classifier';
 import { AIVA_SYSTEM_PROMPT } from './personality/aiva-personality';
 import { ModelRouterService } from './router/model-router.service';
 import { AIMessage } from './providers/ai-provider.interface';
+import {
+  AivaBackendTrace,
+  createDefaultTrace,
+  printAivaBackendTrace,
+} from './ai-backend-trace';
 
 @Injectable()
 export class AIVAService {
@@ -46,52 +51,110 @@ export class AIVAService {
     userId: string,
     message: string,
     conversationId?: string,
+    metadata?: {
+      requestId?: string;
+      authenticated?: boolean;
+      deviceAuthorized?: boolean;
+      route?: string;
+      mode?: string;
+    },
   ): Promise<AIVAConversationResponse> {
-    this.logger.debug(`Processing message from user ${userId}: ${message.substring(0, 50)}...`);
+    const startTime = Date.now();
+    const trace = createDefaultTrace(metadata?.requestId || `req_${Date.now()}`);
+    trace.authenticated = metadata?.authenticated ?? true;
+    trace.deviceAuthorized = metadata?.deviceAuthorized ?? true;
+    trace.route = metadata?.route || '/ai/chat';
+    trace.mode = metadata?.mode || 'default';
 
-    // Write user turn to memory layers
-    await this.memoryOrchestrator.writeBack({
-      type: 'user_turn',
-      userId,
-      content: message,
-    });
-
-    // Get conversation context from traditional memory service
-    const context = await this.memoryService.getConversationContext(userId, conversationId);
-
-    // Classify intent
-    const intent = await this.intentClassifier.classify(message, context);
-
-    this.logger.debug(`Classified intent: ${intent.type}, confidence: ${intent.confidence}`);
-
-    // Route to agent or handle directly
-    let response: AIVAConversationResponse;
-
-    if (intent.requiresAgent) {
-      response = await this.handleAgentRouting(userId, message, intent, context);
-    } else {
-      response = await this.handleDirectResponse(userId, message);
-    }
-
-    // Write assistant turn to memory layers
-    await this.memoryOrchestrator.writeBack({
-      type: 'assistant_turn',
-      userId,
-      content: response.response,
-      metadata: {
-        agentType: response.agentType,
-        toolCalls: response.toolCalls,
-      },
-    });
-
-    // Auto-detect and store user preferences
-    await this.memoryOrchestrator.detectAndStorePreferences(
-      userId,
-      message,
-      response.response,
+    this.logger.debug(
+      `Processing message from user ${userId} [${trace.requestId}]: ${message.substring(0, 50)}...`,
     );
 
-    return response;
+    try {
+      // 1. Write user turn to memory layers
+      trace.failure_stage = 'memory_write_user_turn';
+      try {
+        await this.memoryOrchestrator.writeBack({
+          type: 'user_turn',
+          userId,
+          content: message,
+        });
+      } catch (memErr: any) {
+        this.logger.warn(`Failed writing user turn to memory: ${memErr.message}`);
+      }
+
+      // 2. Get conversation context from memory service
+      trace.failure_stage = 'memory_get_context';
+      const context = await this.memoryService.getConversationContext(userId, conversationId);
+
+      // 3. Classify intent
+      trace.failure_stage = 'intent_classification';
+      const intent = await this.intentClassifier.classify(message, context);
+      trace.messageCategory = intent.type || 'general';
+
+      this.logger.debug(`Classified intent: ${intent.type}, confidence: ${intent.confidence}`);
+
+      // 4. Route to agent or handle directly
+      let response: AIVAConversationResponse;
+
+      if (intent.requiresAgent) {
+        trace.tool_selected = intent.agentType || 'none';
+        trace.failure_stage = `agent_${intent.agentType}`;
+        response = await this.handleAgentRouting(userId, message, intent, context, trace);
+        trace.tool_execution = response.toolCalls?.length > 0 ? 'executed' : 'completed';
+      } else {
+        trace.failure_stage = 'direct_model_inference';
+        response = await this.handleDirectResponse(userId, message, trace);
+      }
+
+      // 5. Write assistant turn to memory layers
+      trace.failure_stage = 'memory_write_assistant_turn';
+      try {
+        await this.memoryOrchestrator.writeBack({
+          type: 'assistant_turn',
+          userId,
+          content: response.response,
+          metadata: {
+            agentType: response.agentType,
+            toolCalls: response.toolCalls,
+          },
+        });
+      } catch (memErr: any) {
+        this.logger.warn(`Failed writing assistant turn to memory: ${memErr.message}`);
+      }
+
+      // 6. Auto-detect and store user preferences
+      try {
+        await this.memoryOrchestrator.detectAndStorePreferences(
+          userId,
+          message,
+          response.response,
+        );
+      } catch (prefErr: any) {
+        this.logger.warn(`Preference detection warning: ${prefErr.message}`);
+      }
+
+      trace.final_response_generated = true;
+      trace.total_latency = Date.now() - startTime;
+      trace.failure_stage = 'none';
+      trace.failure_type = 'none';
+      trace.failure_message = 'none';
+
+      printAivaBackendTrace(trace);
+      return response;
+    } catch (error: any) {
+      trace.final_response_generated = false;
+      trace.total_latency = Date.now() - startTime;
+      trace.failure_type = error.name || 'Error';
+      trace.failure_message = error.message || 'Unknown error';
+
+      printAivaBackendTrace(trace);
+      console.error(`[AIVA BACKEND EXCEPTION] Error in chat processing: ${error.message}`);
+      if (error.stack) {
+        console.error(`[AIVA BACKEND STACK TRACE]\n${error.stack}`);
+      }
+      throw error;
+    }
   }
 
   private async handleAgentRouting(
@@ -99,6 +162,7 @@ export class AIVAService {
     message: string,
     intent: ClassifiedIntent,
     context: ConversationContext,
+    _trace?: AivaBackendTrace,
   ): Promise<AIVAConversationResponse> {
     this.logger.log(`Routing to agent: ${intent.agentType}`);
 
@@ -112,16 +176,20 @@ export class AIVAService {
     );
 
     // Store conversation in persistent DB
+    const cid =
+      agentResult.conversationId ||
+      (await this.memoryService.getOrCreateConversation(userId));
+
     await this.memoryService.addMessage({
       userId,
-      conversationId: agentResult.conversationId,
+      conversationId: cid,
       role: 'user',
       content: message,
     });
 
     await this.memoryService.addMessage({
       userId,
-      conversationId: agentResult.conversationId,
+      conversationId: cid,
       role: 'assistant',
       content: agentResult.response,
       metadata: {
@@ -141,7 +209,7 @@ export class AIVAService {
     }
 
     return {
-      conversationId: agentResult.conversationId,
+      conversationId: cid,
       response: agentResult.response,
       agentType: intent.agentType,
       toolCalls: agentResult.toolCalls,
@@ -156,6 +224,7 @@ export class AIVAService {
   private async handleDirectResponse(
     userId: string,
     message: string,
+    trace?: AivaBackendTrace,
   ): Promise<AIVAConversationResponse> {
     // Build augmented prompt with all memory layers
     const augmentedPrompt = await this.memoryOrchestrator.buildPrompt(
@@ -170,10 +239,14 @@ export class AIVAService {
     }));
 
     // Generate response via AIVA Model Router
-    const response = await this.modelRouter.chat(messages, {
-      temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
-      maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
-    });
+    const response = await this.modelRouter.chat(
+      messages,
+      {
+        temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
+        maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
+      },
+      trace,
+    );
 
     // Create conversation if needed
     const conversationId = await this.memoryService.getOrCreateConversation(userId);

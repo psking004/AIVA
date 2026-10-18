@@ -61,7 +61,8 @@ export class TaskAgent {
     // Use AI to extract task details from natural language
     const extracted = await this.aiva.extractTasks(userId, input);
 
-    const taskData = Array.isArray(extracted) ? extracted[0] : extracted;
+    const rawData = Array.isArray(extracted) ? (extracted.length > 0 ? extracted[0] : null) : extracted;
+    const taskData = (rawData && typeof rawData === 'object') ? rawData : {};
 
     const task = await this.prisma.task.create({
       data: {
@@ -141,11 +142,13 @@ export class TaskAgent {
       take: limit,
     });
 
-    const taskList = tasks.map((t: Task, i: number) => `${i + 1}. ${t.title} (${t.priority})`).join('\n');
+    const taskList = tasks.length > 0
+      ? tasks.map((t: Task, i: number) => `${i + 1}. ${t.title} (${t.priority})`).join('\n')
+      : 'You do not have any tasks right now.';
 
     return {
       success: true,
-      response: `Here are your tasks:\n\n${taskList}`,
+      response: tasks.length > 0 ? `Here are your tasks:\n\n${taskList}` : 'You do not have any tasks right now.',
       tasks,
       toolCalls: [{ name: 'listTasks', args: { status, limit } }],
       context: { taskCount: tasks.length },
