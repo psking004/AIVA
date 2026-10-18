@@ -12,6 +12,7 @@ import {
   Param,
   UseGuards,
   UnauthorizedException,
+  InternalServerErrorException,
   Request,
 } from '@nestjs/common';
 import {
@@ -103,8 +104,13 @@ export class AuthController {
    */
   @Post('login')
   async login(@Body() body: LoginDto) {
-    const { email, password, device } = body;
-    return this.authService.login(email, password, device);
+    try {
+      const { email, password, device } = body;
+      return await this.authService.login(email, password, device);
+    } catch (err: any) {
+      if (err instanceof UnauthorizedException || err.status) throw err;
+      throw new InternalServerErrorException(err.message || 'Login failed');
+    }
   }
 
   /**
