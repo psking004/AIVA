@@ -59,7 +59,7 @@ export async function checkHealth(
   // Check database
   try {
     const start = Date.now();
-    await prisma.$queryRaw`SELECT 1`;
+    await prisma.$queryRawUnsafe('SELECT 1');
     health.services.database.latency = Date.now() - start;
   } catch (error: any) {
     health.services.database = { status: 'down', error: error.message };
@@ -116,7 +116,7 @@ export async function checkReadiness(
 ): Promise<boolean> {
   try {
     // Database must be up for readiness
-    await prisma.$queryRaw`SELECT 1`;
+    await prisma.$queryRawUnsafe('SELECT 1');
     return true;
   } catch {
     return false;
