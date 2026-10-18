@@ -2,7 +2,7 @@
  * TasksController - Task HTTP endpoints
  */
 
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, Request, InternalServerErrorException } from '@nestjs/common';
 import { TasksService } from './tasks.service';
 import { DeviceAuthGuard } from '../auth/guards/device-auth.guard';
 
@@ -13,12 +13,20 @@ export class TasksController {
 
   @Post()
   async create(@Request() req: any, @Body() body: any) {
-    return this.tasksService.create(req.user.id, body);
+    try {
+      return await this.tasksService.create(req.user.id, body);
+    } catch (err: any) {
+      throw new InternalServerErrorException(err.message || 'Task creation failed');
+    }
   }
 
   @Get()
   async findAll(@Request() req: any, @Query() filters: any) {
-    return this.tasksService.findAll(req.user.id, filters);
+    try {
+      return await this.tasksService.findAll(req.user.id, filters);
+    } catch (err: any) {
+      throw new InternalServerErrorException(err.message || 'Task query failed');
+    }
   }
 
   @Get(':id')

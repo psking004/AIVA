@@ -32,6 +32,7 @@ export interface ServiceHealth {
   status: 'up' | 'down';
   latency?: number | undefined;
   error?: string | undefined;
+  code?: string | undefined;
 }
 
 export async function checkHealth(
@@ -62,9 +63,10 @@ export async function checkHealth(
   try {
     const start = Date.now();
     await prisma.$queryRawUnsafe('SELECT 1');
+    await prisma.user.findFirst({ select: { id: true } });
     health.services.database.latency = Date.now() - start;
   } catch (error: any) {
-    health.services.database = { status: 'down', error: error.message };
+    health.services.database = { status: 'down', error: error.message, code: error.code };
     health.status = 'unhealthy';
   }
 
