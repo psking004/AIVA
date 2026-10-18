@@ -12,7 +12,6 @@ import {
   Param,
   UseGuards,
   UnauthorizedException,
-  InternalServerErrorException,
   HttpException,
   Request,
 } from '@nestjs/common';

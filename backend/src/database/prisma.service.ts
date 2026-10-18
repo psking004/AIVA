@@ -6,7 +6,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/commo
 import { PrismaClient } from '@prisma/client';
 
 function getDatabaseUrl(): string | undefined {
-  const url = process.env.DATABASE_URL;
+  let url = process.env.DATABASE_URL;
   if (!url) return undefined;
   if (url.includes(':6543') || url.includes('pooler') || url.includes('supabase')) {
     if (!url.includes('pgbouncer=true')) {
