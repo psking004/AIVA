@@ -12,6 +12,7 @@ import { ModelRouterService } from '../ai/router/model-router.service';
 export interface HealthStatus {
   status: 'healthy' | 'unhealthy' | 'degraded';
   timestamp: string;
+  version?: string;
   services: {
     database: ServiceHealth;
     cache: ServiceHealth;
@@ -41,6 +42,7 @@ export async function checkHealth(
   const health: HealthStatus = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
+    version: process.env.RENDER_GIT_COMMIT || 'v2.0-rc',
     services: {
       database: { status: 'up' },
       cache: { status: 'up' },
