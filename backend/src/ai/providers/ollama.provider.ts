@@ -38,7 +38,7 @@ export class OllamaProvider implements AIProvider {
 
   get timeoutMs(): number {
     const configured = this.configService.get<string>('OLLAMA_TIMEOUT_MS');
-    return configured ? parseInt(configured, 10) : 30000;
+    return configured ? parseInt(configured, 10) : 2500;
   }
 
   /**
