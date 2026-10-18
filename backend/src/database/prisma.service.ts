@@ -11,8 +11,13 @@ function getDatabaseUrl(): string | undefined {
   if (url.includes(':6543') || url.includes('pooler') || url.includes('supabase')) {
     if (!url.includes('pgbouncer=true')) {
       const sep = url.includes('?') ? '&' : '?';
-      return `${url}${sep}pgbouncer=true`;
+      url = `${url}${sep}pgbouncer=true`;
     }
+    if (!url.includes('statement_cache_size=0')) {
+      const sep = url.includes('?') ? '&' : '?';
+      url = `${url}${sep}statement_cache_size=0`;
+    }
+    return url;
   }
   return url;
 }

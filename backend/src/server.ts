@@ -10,6 +10,10 @@ if (process.env.DATABASE_URL && (process.env.DATABASE_URL.includes(':6543') || p
     const sep = process.env.DATABASE_URL.includes('?') ? '&' : '?';
     process.env.DATABASE_URL = `${process.env.DATABASE_URL}${sep}pgbouncer=true`;
   }
+  if (!process.env.DATABASE_URL.includes('statement_cache_size=0')) {
+    const sep = process.env.DATABASE_URL.includes('?') ? '&' : '?';
+    process.env.DATABASE_URL = `${process.env.DATABASE_URL}${sep}statement_cache_size=0`;
+  }
 }
 
 import 'reflect-metadata';

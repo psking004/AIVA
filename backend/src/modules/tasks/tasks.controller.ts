@@ -31,17 +31,29 @@ export class TasksController {
 
   @Get(':id')
   async findOne(@Request() req: any, @Param('id') id: string) {
-    return this.tasksService.findOne(req.user.id, id);
+    try {
+      return await this.tasksService.findOne(req.user.id, id);
+    } catch (err: any) {
+      throw new InternalServerErrorException(err.message || 'Task lookup failed');
+    }
   }
 
   @Put(':id')
   async update(@Request() req: any, @Param('id') id: string, @Body() body: any) {
-    return this.tasksService.update(req.user.id, id, body);
+    try {
+      return await this.tasksService.update(req.user.id, id, body);
+    } catch (err: any) {
+      throw new InternalServerErrorException(err.message || 'Task update failed');
+    }
   }
 
   @Delete(':id')
   async remove(@Request() req: any, @Param('id') id: string) {
-    return this.tasksService.remove(req.user.id, id);
+    try {
+      return await this.tasksService.remove(req.user.id, id);
+    } catch (err: any) {
+      throw new InternalServerErrorException(err.message || 'Task removal failed');
+    }
   }
 }
 
