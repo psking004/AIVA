@@ -33,8 +33,13 @@ export default function RootLayout({
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600;700;900&display=swap"
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "if(typeof window!=='undefined'&&(window.electronAPI||navigator.userAgent.includes('Electron'))){document.documentElement.classList.add('electron-app');}",
+          }}
+        />
       </head>
-      <body className="bg-[#050505] text-on-background text-base min-h-screen selection:bg-primary/30 antialiased">
+      <body className="bg-obsidian-950 text-on-surface text-base min-h-screen selection:bg-cyan-glow/20 antialiased font-body">
         <Providers>
           {children}
         </Providers>

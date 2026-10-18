@@ -62,7 +62,6 @@ export async function checkHealth(
   // Check database
   try {
     const start = Date.now();
-    await prisma.$queryRawUnsafe('SELECT 1');
     await prisma.user.findFirst({ select: { id: true } });
     health.services.database.latency = Date.now() - start;
   } catch (error: any) {
@@ -120,7 +119,7 @@ export async function checkReadiness(
 ): Promise<boolean> {
   try {
     // Database must be up for readiness
-    await prisma.$queryRawUnsafe('SELECT 1');
+    await prisma.user.findFirst({ select: { id: true } });
     return true;
   } catch {
     return false;
