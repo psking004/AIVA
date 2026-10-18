@@ -4,6 +4,14 @@
  * Architecture: NestJS + Fastify + AI Orchestration Layer
  */
 
+// Patch Supabase PgBouncer pooler URL before any module or PrismaClient initializes
+if (process.env.DATABASE_URL && (process.env.DATABASE_URL.includes(':6543') || process.env.DATABASE_URL.includes('pooler.supabase.com'))) {
+  if (!process.env.DATABASE_URL.includes('pgbouncer=true')) {
+    const sep = process.env.DATABASE_URL.includes('?') ? '&' : '?';
+    process.env.DATABASE_URL = `${process.env.DATABASE_URL}${sep}pgbouncer=true`;
+  }
+}
+
 import 'reflect-metadata';
 
 import { NestFactory } from '@nestjs/core';
