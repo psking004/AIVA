@@ -1,6 +1,6 @@
 const https = require('https');
 
-const apiKey = 'sk_12065e1dc1c3be0a9b6e246b754fd7a814e81144cc66ce56';
+const apiKey = process.env.ELEVENLABS_API_KEY;
 const voiceId = 'pWNTwVg1VWkpYKZmDfW2';
 
 console.log(`Testing direct ElevenLabs stream with voiceId=${voiceId.slice(-4)}...`);
