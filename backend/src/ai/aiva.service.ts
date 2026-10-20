@@ -281,6 +281,8 @@ export class AIVAService {
       agentType: null,
       toolCalls: [],
       context: await this.memoryService.getConversationContext(userId, conversationId),
+      model: response.model,
+      provider: response.provider,
     };
   }
 
@@ -380,6 +382,8 @@ export interface AIVAConversationResponse {
   agentType: string | null;
   toolCalls: ToolCall[];
   context: ConversationContext;
+  model?: string;
+  provider?: string;
 }
 
 export interface ToolCall {

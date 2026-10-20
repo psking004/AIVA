@@ -10,7 +10,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ComputeNodeService } from './compute-node.service';
+import { ComputeNodeService, NodeId, NodeRole } from './compute-node.service';
 import { AivaPolicyEngine } from '../policy/aiva-policy-engine';
 
 export interface WorkloadRequest {
@@ -24,9 +24,9 @@ export interface WorkloadRequest {
 }
 
 export interface SchedulingDecision {
-  targetNode: 'PC-A' | 'PC-B' | 'ANDROID' | 'CLOUD';
+  targetNode: NodeId;
   targetDeviceId?: string;
-  nodeRole: string;
+  nodeRole: NodeRole;
   provider: 'ollama' | 'gemini' | 'openrouter' | 'local';
   model: string;
   routingReason: string;
@@ -58,9 +58,15 @@ export class ComputeSchedulerService {
       }
     }
 
-    const activeNodes = this.nodeService.listNodes().filter((n) => n.status !== 'OFFLINE');
-    const pca = activeNodes.find((n) => n.nodeId === 'PC-A');
-    const pcb = activeNodes.find((n) => n.nodeId === 'PC-B');
+    const activeNodes = this.nodeService.listNodes().filter((n) => this.nodeService.isNodeAvailable(n.deviceId));
+    
+    // Capability-based peer matching (prefer AI_POWER_NODE / CUDA for heavy tasks, CPU_LOCAL_NODE for lighter tasks)
+    const powerNode = activeNodes.find(
+      (n) => (n.nodeRole === 'AI_POWER_NODE' || (n.gpu?.hasCuda && (n.gpu?.vramMb ?? 0) >= 4000) || n.nodeId === 'PC-A')
+    );
+    const cpuNode = activeNodes.find(
+      (n) => (n.nodeRole === 'CPU_LOCAL_NODE' || n.nodeId === 'PC-B')
+    );
 
     this.logger.debug(
       `Scheduling workload "${request.type}" from ${request.sourceDeviceType} [Privacy: ${request.privacyLevel}]`
@@ -68,29 +74,29 @@ export class ComputeSchedulerService {
 
     // 1. Privacy Rule: Strictly forbid Cloud for PRIVATE workloads
     if (request.privacyLevel === 'PRIVATE') {
-      if (pca && pca.status === 'ONLINE' && (pca.gpu.utilizationPercent ?? 0) < 90) {
+      if (powerNode && powerNode.status === 'ONLINE' && (powerNode.gpu?.utilizationPercent ?? 0) < 90) {
         return {
-          targetNode: 'PC-A',
-          targetDeviceId: pca.deviceId,
-          nodeRole: pca.nodeRole,
+          targetNode: powerNode.nodeId,
+          targetDeviceId: powerNode.deviceId,
+          nodeRole: powerNode.nodeRole,
           provider: 'ollama',
-          model: pca.models?.[0] || 'qwen3:8b',
-          routingReason: 'Privacy policy: Private workload routed to local RTX AI Power Node.',
-          isRemote: request.sourceDeviceType !== 'desktop',
+          model: powerNode.models?.[0] || 'qwen3.5:latest',
+          routingReason: 'Privacy policy: Private workload routed to local AI Power Node.',
+          isRemote: request.sourceDeviceId !== powerNode.deviceId,
           estimatedCost: 0,
           score: 98,
         };
       }
 
-      if (pcb && pcb.status === 'ONLINE') {
+      if (cpuNode && cpuNode.status === 'ONLINE') {
         return {
-          targetNode: 'PC-B',
-          targetDeviceId: pcb.deviceId,
-          nodeRole: pcb.nodeRole,
+          targetNode: cpuNode.nodeId,
+          targetDeviceId: cpuNode.deviceId,
+          nodeRole: cpuNode.nodeRole,
           provider: 'ollama',
-          model: pcb.models?.[0] || 'qwen3:8b',
+          model: cpuNode.models?.[0] || 'qwen3.5:latest',
           routingReason: 'Privacy policy: Private workload routed to local CPU Node.',
-          isRemote: request.sourceDeviceType !== 'desktop',
+          isRemote: request.sourceDeviceId !== cpuNode.deviceId,
           estimatedCost: 0,
           score: 85,
         };
@@ -98,8 +104,8 @@ export class ComputeSchedulerService {
 
       // If no local node available for private workload, reject rather than leak to cloud
       return {
-        targetNode: 'PC-A',
-        nodeRole: 'AI_POWER_NODE',
+        targetNode: 'LOCAL_STANDALONE',
+        nodeRole: 'STANDALONE_NODE',
         provider: 'local',
         model: 'none',
         routingReason: 'No authorized local compute node online to process PRIVATE workload securely.',
@@ -111,32 +117,32 @@ export class ComputeSchedulerService {
 
     // 2. Android Standard Route (PC-Off World Resilience)
     if (request.sourceDeviceType === 'android') {
-      // If Android requests heavy inference or coding, AND PC-A is online with available capacity:
+      // If Android requests heavy inference or coding, AND an AI Power Node is online with available capacity:
       if (
         (request.type === 'HEAVY_INFERENCE' || request.type === 'CODING') &&
-        pca &&
-        pca.status === 'ONLINE' &&
-        (pca.gpu.utilizationPercent ?? 0) < 85
+        powerNode &&
+        powerNode.status === 'ONLINE' &&
+        (powerNode.gpu?.utilizationPercent ?? 0) < 85
       ) {
         return {
-          targetNode: 'PC-A',
-          targetDeviceId: pca.deviceId,
-          nodeRole: pca.nodeRole,
+          targetNode: powerNode.nodeId,
+          targetDeviceId: powerNode.deviceId,
+          nodeRole: powerNode.nodeRole,
           provider: 'ollama',
-          model: pca.models?.[0] || 'qwen3:8b',
-          routingReason: 'Idle Resource Harvesting: Android heavy workload offloaded to underutilized PC-A RTX 3050.',
+          model: powerNode.models?.[0] || 'qwen3.5:latest',
+          routingReason: `Idle Resource Harvesting: Android heavy workload offloaded to underutilized ${powerNode.nodeId} (${powerNode.gpu?.deviceName || 'GPU'}).`,
           isRemote: true,
           estimatedCost: 0,
           score: 95,
         };
       }
 
-      // Default autonomous mobile cloud route (Gemini)
+      // Default autonomous mobile cloud route (Gemini) - Zero PC dependency
       return {
         targetNode: 'CLOUD',
         nodeRole: 'CLOUD_CLUSTER',
         provider: 'gemini',
-        model: 'gemini-1.5-flash',
+        model: 'gemini-3.5-flash',
         routingReason: 'Mobile Autonomous Route: Zero PC dependency, high-speed cloud reasoning via Gemini.',
         isRemote: false,
         estimatedCost: 0.00001,
@@ -146,37 +152,37 @@ export class ComputeSchedulerService {
 
     // 3. Desktop / PC-B Workload Scheduling
     if (request.type === 'HEAVY_INFERENCE' || request.type === 'CODING') {
-      // Load-Aware Shedding Check for PC-A:
-      if (pca && (pca.status === 'ONLINE' || pca.status === 'BUSY')) {
+      // Load-Aware Shedding Check for Power Node:
+      if (powerNode && (powerNode.status === 'ONLINE' || powerNode.status === 'BUSY')) {
         const maxGpu = this.configService.get<number>('MAX_GPU_LOAD') ?? 90;
         const isOverloaded =
-          (pca.gpu.utilizationPercent ?? 0) >= maxGpu ||
-          (pca.cpu.utilizationPercent ?? 0) >= 90 ||
-          pca.status === 'BUSY';
+          (powerNode.gpu?.utilizationPercent ?? 0) >= maxGpu ||
+          (powerNode.cpu?.utilizationPercent ?? 0) >= 90 ||
+          powerNode.status === 'BUSY';
 
         if (isOverloaded) {
-          this.logger.warn('[LOAD SHEDDING] PC-A is at capacity (>90%). Shedding workload to cloud/secondary.');
+          this.logger.warn(`[LOAD SHEDDING] ${powerNode.nodeId} is at capacity (>90%). Shedding workload to cloud/secondary.`);
           return {
             targetNode: 'CLOUD',
             nodeRole: 'CLOUD_CLUSTER',
             provider: 'openrouter',
             model: 'qwen/qwen-2.5-72b-instruct',
-            routingReason: 'Load-Aware Shedding: PC-A is busy; task shed to Cloud accelerator.',
+            routingReason: `Load-Aware Shedding: ${powerNode.nodeId} is busy; task shed to Cloud accelerator.`,
             isRemote: false,
             estimatedCost: 0.0005,
             score: 75,
           };
         }
 
-        // PC-A is available and optimal
+        // Power Node is available and optimal
         return {
-          targetNode: 'PC-A',
-          targetDeviceId: pca.deviceId,
-          nodeRole: pca.nodeRole,
+          targetNode: powerNode.nodeId,
+          targetDeviceId: powerNode.deviceId,
+          nodeRole: powerNode.nodeRole,
           provider: 'ollama',
-          model: pca.models?.[0] || 'qwen3:8b',
-          routingReason: 'AI Power Node RTX 3050 available for heavy inference.',
-          isRemote: request.sourceDeviceType === 'web' || request.sourceDeviceId !== pca.deviceId,
+          model: powerNode.models?.[0] || 'qwen3.5:latest',
+          routingReason: `${powerNode.nodeId} (${powerNode.gpu?.deviceName || 'GPU'}) available for heavy inference.`,
+          isRemote: request.sourceDeviceType === 'web' || request.sourceDeviceId !== powerNode.deviceId,
           estimatedCost: 0,
           score: 96,
         };
@@ -184,15 +190,15 @@ export class ComputeSchedulerService {
     }
 
     // 4. Default Local-First or Cloud Fallback
-    if (pcb && pcb.status === 'ONLINE' && request.type === 'LIGHT_INFERENCE') {
+    if (cpuNode && cpuNode.status === 'ONLINE' && request.type === 'LIGHT_INFERENCE') {
       return {
-        targetNode: 'PC-B',
-        targetDeviceId: pcb.deviceId,
-        nodeRole: pcb.nodeRole,
+        targetNode: cpuNode.nodeId,
+        targetDeviceId: cpuNode.deviceId,
+        nodeRole: cpuNode.nodeRole,
         provider: 'ollama',
-        model: pcb.models?.[0] || 'qwen3:8b',
-        routingReason: 'CPU Local Node available for lightweight task.',
-        isRemote: false,
+        model: cpuNode.models?.[0] || 'qwen3.5:latest',
+        routingReason: `${cpuNode.nodeId} CPU Local Node available for lightweight task.`,
+        isRemote: request.sourceDeviceId !== cpuNode.deviceId,
         estimatedCost: 0,
         score: 82,
       };
@@ -203,7 +209,7 @@ export class ComputeSchedulerService {
       targetNode: 'CLOUD',
       nodeRole: 'CLOUD_CLUSTER',
       provider: 'gemini',
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.5-flash',
       routingReason: 'Cloud cluster optimal for fast general inquiry.',
       isRemote: false,
       estimatedCost: 0.00001,

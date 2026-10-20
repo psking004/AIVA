@@ -1,7 +1,7 @@
 {
-  "device_id": "device_pc_b_ecb0dc3e073b",
-  "node_id": "PC-B",
-  "node_role": "CPU_LOCAL_NODE",
-  "hostname": "Cosmic_004",
-  "created_at": 1792480655
+  "device_id": "device_pc_a_df25104ec306",
+  "node_id": "PC-A",
+  "node_role": "AI_POWER_NODE",
+  "hostname": "psking004",
+  "created_at": 1792495603
 }

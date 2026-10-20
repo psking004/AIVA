@@ -10,11 +10,14 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 
+export type NodeId = 'PC-A' | 'PC-B' | 'ANDROID' | 'CLOUD' | string;
+export type NodeRole = 'AI_POWER_NODE' | 'CPU_LOCAL_NODE' | 'MOBILE_CLIENT' | 'CLOUD_CLUSTER' | string;
+
 export interface ComputeNodeRegistration {
   deviceId: string;
   deviceName: string;
-  nodeId: 'PC-A' | 'PC-B' | 'ANDROID' | 'CLOUD';
-  nodeRole: 'AI_POWER_NODE' | 'CPU_LOCAL_NODE' | 'MOBILE_CLIENT' | 'CLOUD_CLUSTER';
+  nodeId: NodeId;
+  nodeRole: NodeRole;
   cpu: {
     model: string;
     cores: number;
@@ -51,6 +54,11 @@ export class ComputeNodeService {
   private nodes: Map<string, ComputeNodeRegistration> = new Map();
   private readonly heartbeatTimeoutMs = 60000; // 1 minute liveness timeout
 
+  // Peer Node Circuit Breaker tracking
+  private nodeFailures: Map<string, { count: number; lastFailed: number; cooldownUntil: number }> = new Map();
+  private readonly failureThreshold = 3;
+  private readonly failureCooldownMs = 30000; // 30s cooldown upon trip
+
   constructor() {
     this.logger.log('AIVA Compute Node Service initialized');
   }
@@ -65,21 +73,33 @@ export class ComputeNodeService {
     };
 
     this.nodes.set(node.deviceId, fullNode);
+    this.recordNodeSuccess(node.deviceId);
     this.logger.log(
-      `Registered AIVA Compute Node: ${node.nodeId} (${node.nodeRole}) on host "${node.deviceName}" [CUDA: ${node.gpu.hasCuda}]`
+      `Registered AIVA Compute Node: ${node.nodeId} (${node.nodeRole}) on host "${node.deviceName}" [CUDA: ${node.gpu?.hasCuda}]`
     );
 
     return fullNode;
   }
 
   /**
+   * Unregister node (clean departure)
+   */
+  public unregisterNode(key: string): boolean {
+    const node = this.findNode(key);
+    if (!node) return false;
+    this.nodes.delete(node.deviceId);
+    this.logger.log(`Unregistered AIVA Compute Node: ${node.nodeId} (${node.deviceId})`);
+    return true;
+  }
+
+  /**
    * Helper to find node by either deviceId or nodeId
    */
-  private findNode(key: string): ComputeNodeRegistration | undefined {
+  public findNode(key: string): ComputeNodeRegistration | undefined {
     let node = this.nodes.get(key);
     if (!node) {
       for (const n of this.nodes.values()) {
-        if (n.nodeId === key) {
+        if (n.nodeId === key || n.deviceId === key) {
           node = n;
           break;
         }
@@ -98,7 +118,54 @@ export class ComputeNodeService {
     node.lastHeartbeat = Date.now();
     node.status = 'ONLINE';
     if (latencyMs !== undefined) node.latencyMs = latencyMs;
+    this.recordNodeSuccess(key);
     return true;
+  }
+
+  /**
+   * Record node failure for circuit breaker protection
+   */
+  public recordNodeFailure(key: string): void {
+    const node = this.findNode(key);
+    const identifier = node?.nodeId || key;
+    const current = this.nodeFailures.get(identifier) || { count: 0, lastFailed: 0, cooldownUntil: 0 };
+    const now = Date.now();
+    current.count += 1;
+    current.lastFailed = now;
+    if (current.count >= this.failureThreshold) {
+      current.cooldownUntil = now + this.failureCooldownMs;
+      if (node) node.status = 'BUSY';
+      this.logger.warn(`[NODE CIRCUIT BREAKER] Peer ${identifier} tripped after ${current.count} failures. Cooldown for ${this.failureCooldownMs / 1000}s`);
+    }
+    this.nodeFailures.set(identifier, current);
+  }
+
+  /**
+   * Reset node failure count on successful execution
+   */
+  public recordNodeSuccess(key: string): void {
+    const node = this.findNode(key);
+    const identifier = node?.nodeId || key;
+    this.nodeFailures.delete(identifier);
+    if (node && node.deviceId) this.nodeFailures.delete(node.deviceId);
+  }
+
+  /**
+   * Check whether a node is active and not tripped by circuit breaker
+   */
+  public isNodeAvailable(key: string): boolean {
+    const node = this.findNode(key);
+    if (!node) return false;
+    const now = Date.now();
+    if (now - node.lastHeartbeat > this.heartbeatTimeoutMs) {
+      node.status = 'OFFLINE';
+      return false;
+    }
+    const failInfo = this.nodeFailures.get(node.nodeId) || this.nodeFailures.get(node.deviceId);
+    if (failInfo && now < failInfo.cooldownUntil) {
+      return false;
+    }
+    return node.status === 'ONLINE';
   }
 
   /**
@@ -122,19 +189,19 @@ export class ComputeNodeService {
    * Select the optimal node for a workload
    */
   public selectBestNode(workloadType: 'HEAVY_INFERENCE' | 'LIGHT_INFERENCE' | 'TTS' | 'CODE'): ComputeNodeRegistration | null {
-    const activeNodes = this.listNodes().filter((n) => n.status === 'ONLINE');
+    const activeNodes = this.listNodes().filter((n) => this.isNodeAvailable(n.deviceId));
 
     if (activeNodes.length === 0) return null;
 
     if (workloadType === 'HEAVY_INFERENCE' || workloadType === 'CODE') {
-      // Prefer PC-A (CUDA Power Node) if online
-      const pca = activeNodes.find((n) => n.nodeId === 'PC-A' && n.gpu.hasCuda);
-      if (pca) return pca;
+      // Prefer AI Power Node with CUDA / high VRAM
+      const powerNode = activeNodes.find((n) => (n.gpu?.hasCuda && (n.gpu?.vramMb ?? 0) >= 4000) || n.nodeRole === 'AI_POWER_NODE' || n.nodeId === 'PC-A');
+      if (powerNode) return powerNode;
     }
 
-    // Fall back to any active PC node
-    const pcNode = activeNodes.find((n) => n.nodeId === 'PC-B' || n.nodeId === 'PC-A');
-    if (pcNode) return pcNode;
+    // Fall back to any active available node
+    const candidate = activeNodes.find((n) => n.nodeRole === 'CPU_LOCAL_NODE' || n.nodeId === 'PC-B');
+    if (candidate) return candidate;
 
     return activeNodes[0] || null;
   }

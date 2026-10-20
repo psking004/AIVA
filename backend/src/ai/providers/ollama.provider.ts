@@ -90,12 +90,17 @@ export class OllamaProvider implements AIProvider {
       }
 
       const data = (await response.json()) as {
-        message?: { content?: string };
+        message?: { content?: string; thinking?: string };
         prompt_eval_count?: number;
         eval_count?: number;
       };
 
-      const content = data.message?.content || '';
+      let content = data.message?.content || '';
+      if (!content.trim() && data.message?.thinking) {
+        const thinking = data.message.thinking.trim();
+        const lines = thinking.split('\n').map((l) => l.trim()).filter(Boolean);
+        content = lines[lines.length - 1] || thinking;
+      }
 
       return {
         content,

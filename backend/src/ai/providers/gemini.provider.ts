@@ -34,7 +34,7 @@ export class GeminiProvider implements AIProvider {
   }
 
   get defaultModel(): string {
-    return this.configService.get<string>('GEMINI_MODEL') || 'gemini-1.5-flash';
+    return this.configService.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash';
   }
 
   get timeoutMs(): number {

@@ -221,7 +221,10 @@ export class ModelRouterService implements OnModuleInit {
       return this.executeProvider(this.geminiProvider, messages, mergedOptions, trace);
     }
 
-    const strategy = this.strategy;
+    const strategy =
+      options?.strategy && options.strategy !== 'default'
+        ? (options.strategy as RoutingStrategy)
+        : this.strategy;
 
     switch (strategy) {
       case 'local-only':
@@ -281,7 +284,10 @@ export class ModelRouterService implements OnModuleInit {
       return this.geminiProvider.streamChat!(messages, onChunk, mergedOptions);
     }
 
-    const strategy = this.strategy;
+    const strategy =
+      options?.strategy && options.strategy !== 'default'
+        ? (options.strategy as RoutingStrategy)
+        : this.strategy;
 
     if (strategy === 'local-only') {
       return this.ollamaProvider.streamChat!(messages, onChunk, mergedOptions);

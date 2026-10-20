@@ -100,20 +100,17 @@ function getTokenExpiry(token: string | null): number | null {
 function resolveDefaultBaseURL(provided?: string): string {
   if (provided) return provided.replace(/\/+$/, '');
   if (typeof process !== 'undefined') {
-    if (
-      process.env?.NEXT_PUBLIC_AIVA_API_URL &&
-      !process.env.NEXT_PUBLIC_AIVA_API_URL.includes('localhost:4000')
-    ) {
+    if (process.env?.NEXT_PUBLIC_AIVA_API_URL) {
       return process.env.NEXT_PUBLIC_AIVA_API_URL.replace(/\/+$/, '');
     }
-    if (process.env?.AIVA_API_URL && !process.env.AIVA_API_URL.includes('localhost:4000')) {
+    if (process.env?.AIVA_API_URL) {
       return process.env.AIVA_API_URL.replace(/\/+$/, '');
     }
   }
   if (typeof window !== 'undefined' && (window as any).__AIVA_API_URL__) {
     return String((window as any).__AIVA_API_URL__).replace(/\/+$/, '');
   }
-  return 'https://aiva-yitg.onrender.com';
+  return 'http://localhost:4000';
 }
 
 export class AivaClient {
@@ -496,11 +493,21 @@ export class AivaClient {
   }
 
   // Chat with AIVA (AI endpoint)
-  async chat(message: string, conversationId?: string): Promise<{
+  async chat(
+    message: string,
+    conversationId?: string,
+    options?: {
+      temperature?: number;
+      maxTokens?: number;
+      strategy?: string;
+    },
+  ): Promise<{
     conversationId: string;
     response: string;
     agentType: string | null;
     toolCalls?: any[];
+    model?: string;
+    provider?: string;
   }> {
     const ranEnsureAuth = !this.token || isJwtExpired(this.token);
     await this.ensureAuthenticated();
@@ -515,7 +522,38 @@ export class AivaClient {
     console.log(`whether ensureAuthenticated() ran: ${ranEnsureAuth}`);
     console.log(`whether 401 retry happened: ${this.lastRetryOccurred}`);
 
-    const response = await this.client.post('/ai/chat', { message, conversationId });
+    const response = await this.client.post('/ai/chat', { message, conversationId, options });
+    return response.data;
+  }
+
+  // Compute Fabric & Distributed Remote Execution
+  async registerFabricNode(node: any): Promise<any> {
+    await this.ensureAuthenticated();
+    const response = await this.client.post('/ai/fabric/register', node);
+    return response.data;
+  }
+
+  async sendFabricHeartbeat(deviceId: string, latencyMs?: number): Promise<any> {
+    await this.ensureAuthenticated();
+    const response = await this.client.post('/ai/fabric/heartbeat', { deviceId, latencyMs });
+    return response.data;
+  }
+
+  async getFabricNodes(): Promise<any[]> {
+    await this.ensureAuthenticated();
+    const response = await this.client.get('/ai/fabric/nodes');
+    return response.data;
+  }
+
+  async scheduleFabricWorkload(workload: any): Promise<any> {
+    await this.ensureAuthenticated();
+    const response = await this.client.post('/ai/fabric/schedule', workload);
+    return response.data;
+  }
+
+  async executeRemoteCapability(request: any): Promise<any> {
+    await this.ensureAuthenticated();
+    const response = await this.client.post('/ai/remote/execute', request);
     return response.data;
   }
 

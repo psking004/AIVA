@@ -4,6 +4,18 @@
  * Architecture: NestJS + Fastify + AI Orchestration Layer
  */
 
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+import * as dns from 'dns';
+
+// Ensure IPv4 first on Windows to avoid ISP IPv6 packet drops
+dns.setDefaultResultOrder('ipv4first');
+
+// Load environment variables early
+dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
+
 // Patch DATABASE_URL with pgbouncer and statement_cache_size=0 unconditionally to prevent prepared statement collisions
 if (process.env.DATABASE_URL) {
   if (!process.env.DATABASE_URL.includes('pgbouncer=true')) {
@@ -113,10 +125,16 @@ async function bootstrap() {
 
   // Rate limiting will be configured via ThrottlerModule
 
-  const port = configService.get('PORT', 4000);
-  await app.listen(port);
+  const port = Number(configService.get('PORT', 4000));
+  const nodeMode = (configService.get<string>('AIVA_NODE_MODE', 'standalone') || 'standalone').toLowerCase();
+  // Standalone mode binds strictly to 127.0.0.1 (private/local)
+  // Peer mode binds to 0.0.0.0 (or configured HOST) for authenticated LAN peer collaboration
+  const defaultHost = nodeMode === 'peer' ? '0.0.0.0' : '127.0.0.1';
+  const host = configService.get<string>('HOST', defaultHost);
 
-  logger.log(`AIVA Server started on port ${port}`);
+  await app.listen(port, host);
+
+  logger.log(`AIVA Server listening on ${host}:${port} [Node Mode: ${nodeMode.toUpperCase()}]`);
   logger.log(`Environment: ${configService.get('NODE_ENV', 'development')}`);
 }
 

@@ -13,7 +13,8 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:seed": "tsx src/database/seed.ts"
+    "db:seed": "tsx src/database/seed.ts",
+    "test": "tsx src/ai/router/model-router.spec.ts && tsx src/modules/auth/auth.service.spec.ts && tsx src/modules/projects/projects.service.spec.ts && tsx src/ai/nodes/distributed-independence.spec.ts"
   },
   "dependencies": {
     "@langchain/community": "^0.3.32",

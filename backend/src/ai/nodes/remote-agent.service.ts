@@ -10,7 +10,7 @@
 
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { AivaPolicyEngine } from '../policy/aiva-policy-engine';
-import { ComputeNodeService } from './compute-node.service';
+import { ComputeNodeService, NodeId } from './compute-node.service';
 import { CodingAgent } from '../agents/coding.agent';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -18,7 +18,7 @@ import * as fs from 'fs';
 export interface RemoteExecutionRequest {
   requestId: string;
   sourceDeviceId: string;
-  targetNodeId: 'PC-A' | 'PC-B' | 'ANDROID';
+  targetNodeId: NodeId;
   capability: string;
   capabilityLevel: 0 | 1 | 2 | 3 | 4 | 5;
   arguments: Record<string, unknown>;
@@ -84,7 +84,21 @@ export class RemoteAgentService {
     }
     this.processedRequestIds.add(request.requestId);
 
-    // 2. Policy Engine Safety Check (Section 8 & 13)
+    // 2. Target Peer Availability & Circuit Breaker Check
+    const targetNode = this.nodeService.findNode(request.targetNodeId);
+    if (targetNode && !this.nodeService.isNodeAvailable(targetNode.deviceId)) {
+      this.logger.warn(`[REMOTE REJECT] Target node ${request.targetNodeId} is unavailable or in circuit breaker cooldown.`);
+      return {
+        requestId: request.requestId,
+        status: 'FAILED',
+        error: `Target peer node ${request.targetNodeId} is currently unavailable (offline or in circuit breaker cooldown).`,
+        node: request.targetNodeId,
+        latencyMs: Date.now() - tStart,
+        executedCapability: request.capability,
+      };
+    }
+
+    // 3. Policy Engine Safety Check (Section 8 & 13)
     const policy = this.policyEngine.evaluateCapability(request.capability, request.arguments);
     if (!policy.allowed) {
       this.logger.error(`[POLICY BARRIER] Remote execution of ${request.capability} blocked: ${policy.reason}`);
@@ -98,7 +112,7 @@ export class RemoteAgentService {
       };
     }
 
-    // 3. Capability-Level Dispatch
+    // 4. Capability-Level Dispatch
     try {
       let result: any;
 
@@ -135,6 +149,8 @@ export class RemoteAgentService {
           throw new Error(`Unsupported capability level: ${request.capabilityLevel}`);
       }
 
+      this.nodeService.recordNodeSuccess(request.targetNodeId);
+
       return {
         requestId: request.requestId,
         status: 'SUCCEEDED',
@@ -144,6 +160,7 @@ export class RemoteAgentService {
         executedCapability: request.capability,
       };
     } catch (err: any) {
+      this.nodeService.recordNodeFailure(request.targetNodeId);
       this.logger.error(`Remote execution error on capability ${request.capability}: ${err.message}`);
       return {
         requestId: request.requestId,
