@@ -129,6 +129,7 @@ def detect_hardware():
     # Ollama benchmark check
     ollama_online = False
     ollama_latency_ms = None
+    installed_models = []
     try:
         import urllib.request
         t0 = time.time()
@@ -136,6 +137,10 @@ def detect_hardware():
         if req.status == 200:
             ollama_online = True
             ollama_latency_ms = round((time.time() - t0) * 1000, 1)
+            tags_data = json.loads(req.read().decode('utf-8'))
+            installed_models = [m.get("name") for m in tags_data.get("models", []) if m.get("name")]
+            if any("qwen3.5" in m for m in installed_models):
+                preferred_llm = next(m for m in installed_models if "qwen3.5" in m)
     except Exception:
         ollama_online = False
 
@@ -159,6 +164,7 @@ def detect_hardware():
             "device_name": gpu_name,
             "vram_mb": vram_mb,
         },
+        "models": installed_models if installed_models else [preferred_llm],
         "services": {
             "ollama_online": ollama_online,
             "ollama_latency_ms": ollama_latency_ms,

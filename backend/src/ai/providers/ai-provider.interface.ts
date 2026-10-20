@@ -38,6 +38,7 @@ export interface CompletionOptions {
   clientPlatform?: string | undefined;
   strategy?: string | undefined;
   targetNode?: string | undefined;
+  model?: string | undefined;
 }
 
 export interface ProviderResponse {

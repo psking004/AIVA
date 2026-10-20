@@ -48,7 +48,7 @@ export class OllamaProvider implements AIProvider {
     messages: AIMessage[],
     options?: CompletionOptions,
   ): Promise<ProviderResponse> {
-    const model = this.defaultModel;
+    const model = options?.model || this.defaultModel;
     const timeout = options?.timeoutMs || this.timeoutMs;
     const url = `${this.baseUrl}/api/chat`;
 
@@ -146,7 +146,7 @@ export class OllamaProvider implements AIProvider {
     onChunk: (chunk: string) => void,
     options?: CompletionOptions,
   ): Promise<ProviderResponse> {
-    const model = this.defaultModel;
+    const model = options?.model || this.defaultModel;
     const timeout = options?.timeoutMs || this.timeoutMs;
     const url = `${this.baseUrl}/api/chat`;
 
