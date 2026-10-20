@@ -20,6 +20,21 @@ export interface LipSyncEnvelope {
   jawOffsetPx: number;
 }
 
+export interface AivaTtsError {
+  provider: 'elevenlabs';
+  status: number;
+  category:
+    | 'ELEVENLABS_AUTH_INVALID'
+    | 'ELEVENLABS_PERMISSION_DENIED'
+    | 'ELEVENLABS_VOICE_INVALID'
+    | 'ELEVENLABS_RATE_LIMITED'
+    | 'ELEVENLABS_QUOTA_EXCEEDED'
+    | 'ELEVENLABS_SERVER_ERROR'
+    | 'ELEVENLABS_NETWORK_ERROR';
+  reason: string;
+  message: string;
+}
+
 export class AivaAudioOutputManager {
   private static instance: AivaAudioOutputManager | null = null;
 
@@ -127,6 +142,7 @@ export class AivaAudioOutputManager {
     console.log('[AIVA AUDIO MANAGER] Interrupted & reset to silent');
   }
 
+
   /**
    * Synthesizes and speaks text using ElevenLabs via /api/voice/speak.
    * Ensures single-owner playback: interrupts any previous playback before starting.
@@ -134,7 +150,8 @@ export class AivaAudioOutputManager {
   public async speak(
     text: string,
     onStarted?: () => void,
-    onEnded?: () => void
+    onEnded?: () => void,
+    onError?: (error: AivaTtsError) => void
   ): Promise<void> {
     const cleanText = text.trim();
     if (!cleanText) return;
@@ -168,8 +185,48 @@ export class AivaAudioOutputManager {
         try {
           errData = await response.json();
         } catch (_) {}
-        console.error(`[AIVA AUDIO MANAGER] ElevenLabs TTS error (${response.status}):`, errData);
-        if (onEnded) onEnded();
+
+        const category: AivaTtsError['category'] =
+          errData.category ||
+          (response.status === 401 && /quota/i.test(errData.message || '')
+            ? 'ELEVENLABS_QUOTA_EXCEEDED'
+            : response.status === 401 && /permission/i.test(errData.message || '')
+            ? 'ELEVENLABS_PERMISSION_DENIED'
+            : response.status === 401
+            ? 'ELEVENLABS_AUTH_INVALID'
+            : response.status === 429
+            ? 'ELEVENLABS_RATE_LIMITED'
+            : response.status === 400 && /voice/i.test(errData.message || '')
+            ? 'ELEVENLABS_VOICE_INVALID'
+            : 'ELEVENLABS_SERVER_ERROR');
+
+        const reason = errData.reason || (category === 'ELEVENLABS_QUOTA_EXCEEDED' ? 'quota_exceeded' : 'authentication_failed');
+        const message = errData.message || 'ElevenLabs synthesis failed';
+
+        console.error(
+          `[AIVA AUDIO MANAGER] ElevenLabs TTS error (${response.status}):\n` +
+          `provider=elevenlabs\n` +
+          `status=${response.status}\n` +
+          `category=${category}\n` +
+          `reason=${reason}\n` +
+          `message="${message}"`
+        );
+
+        this.isSpeaking = false;
+        if (this.onPlaybackStateChange) {
+          this.onPlaybackStateChange('IDLE');
+        }
+
+        // Requirement 11: Do NOT call onEnded() on failure (prevents fake playback completion)
+        if (onError) {
+          onError({
+            provider: 'elevenlabs',
+            status: response.status,
+            category,
+            reason,
+            message,
+          });
+        }
         return;
       }
 
@@ -220,12 +277,30 @@ export class AivaAudioOutputManager {
         audio.onended = finish;
         audio.onerror = (e) => {
           console.error('[AIVA AUDIO MANAGER] Audio playback error:', e);
+          if (onError) {
+            onError({
+              provider: 'elevenlabs',
+              status: 0,
+              category: 'ELEVENLABS_NETWORK_ERROR',
+              reason: 'audio_element_error',
+              message: 'Audio playback failed',
+            });
+          }
           finish();
         };
 
         audio.play().catch((err) => {
           if (err.name !== 'AbortError') {
             console.error('[AIVA AUDIO MANAGER] Audio play failed:', err);
+            if (onError) {
+              onError({
+                provider: 'elevenlabs',
+                status: 0,
+                category: 'ELEVENLABS_NETWORK_ERROR',
+                reason: 'audio_play_rejected',
+                message: err?.message || 'Audio play rejected',
+              });
+            }
           }
           finish();
         });
@@ -234,9 +309,29 @@ export class AivaAudioOutputManager {
       if (err.name === 'AbortError') {
         console.log(`[AIVA AUDIO MANAGER] TTS request ticket #${playId} aborted.`);
       } else {
-        console.error('[AIVA AUDIO MANAGER] TTS synthesis failed:', err);
+        const errorObj: AivaTtsError = {
+          provider: 'elevenlabs',
+          status: 0,
+          category: 'ELEVENLABS_NETWORK_ERROR',
+          reason: 'network_failure',
+          message: err?.message || 'Network fetch failed',
+        };
+        console.error(
+          `[AIVA AUDIO MANAGER] TTS synthesis network error:\n` +
+          `provider=elevenlabs\n` +
+          `status=0\n` +
+          `category=ELEVENLABS_NETWORK_ERROR\n` +
+          `reason=network_failure\n` +
+          `message="${errorObj.message}"`
+        );
+        this.isSpeaking = false;
+        if (this.onPlaybackStateChange) {
+          this.onPlaybackStateChange('IDLE');
+        }
+        if (onError) {
+          onError(errorObj);
+        }
       }
-      if (onEnded) onEnded();
     }
   }
 

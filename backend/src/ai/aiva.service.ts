@@ -57,6 +57,7 @@ export class AIVAService {
       deviceAuthorized?: boolean;
       route?: string;
       mode?: string;
+      clientPlatform?: string;
     },
   ): Promise<AIVAConversationResponse> {
     const startTime = Date.now();
@@ -104,7 +105,7 @@ export class AIVAService {
         trace.tool_execution = response.toolCalls?.length > 0 ? 'executed' : 'completed';
       } else {
         trace.failure_stage = 'direct_model_inference';
-        response = await this.handleDirectResponse(userId, message, trace);
+        response = await this.handleDirectResponse(userId, message, trace, metadata?.clientPlatform, metadata?.mode);
       }
 
       // 5. Write assistant turn to memory layers
@@ -225,6 +226,8 @@ export class AIVAService {
     userId: string,
     message: string,
     trace?: AivaBackendTrace,
+    clientPlatform?: string,
+    mode?: string,
   ): Promise<AIVAConversationResponse> {
     // Build augmented prompt with all memory layers
     const augmentedPrompt = await this.memoryOrchestrator.buildPrompt(
@@ -244,6 +247,8 @@ export class AIVAService {
       {
         temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
         maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
+        clientPlatform,
+        strategy: mode as any,
       },
       trace,
     );

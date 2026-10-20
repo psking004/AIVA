@@ -185,11 +185,13 @@ export class ResearchAgent {
       content: `Compare these documents and highlight key similarities and differences:\n\n${docText}`,
     });
 
+    const comparisonResult = typeof comparison === 'string' ? comparison : String(comparison?.result ?? '');
+
     return {
       success: true,
-      response: `Comparison:\n\n${comparison}`,
+      response: `Comparison:\n\n${comparisonResult}`,
       documents,
-      comparison,
+      comparison: comparisonResult,
       toolCalls: [{ name: 'compareDocuments', args: { count: documents.length } }],
       context: { comparedCount: documents.length },
       conversationId: null,

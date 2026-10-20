@@ -18,6 +18,10 @@ import { MemoryOrchestrator } from './memory/memory-orchestrator.service';
 import { DeviceAuthGuard } from '../modules/auth/guards/device-auth.guard';
 import { IsString, IsOptional, IsObject } from 'class-validator';
 
+import { ComputeNodeService, type ComputeNodeRegistration } from './nodes/compute-node.service';
+import { ComputeSchedulerService, WorkloadRequest } from './nodes/compute-scheduler.service';
+import { RemoteAgentService, RemoteExecutionRequest } from './nodes/remote-agent.service';
+
 export class ChatRequestDto {
   @IsString()
   message!: string;
@@ -42,6 +46,9 @@ export class AIController {
     private readonly aivaService: AIVAService,
     private readonly modelRouter: ModelRouterService,
     private readonly memoryOrchestrator: MemoryOrchestrator,
+    private readonly computeNodeService: ComputeNodeService,
+    private readonly computeScheduler: ComputeSchedulerService,
+    private readonly remoteAgent: RemoteAgentService,
   ) {}
 
   /**
@@ -51,6 +58,10 @@ export class AIController {
   async chat(@Request() req: any, @Body() body: ChatRequestDto) {
     const userId = req.user?.id;
     const deviceId = req.deviceId || req.headers?.['x-device-id'] || 'none';
+    const clientPlatform =
+      (req.headers?.['x-client-platform'] as string) ||
+      (req.headers?.['x-platform'] as string) ||
+      'web';
     const requestId =
       (req.headers?.['x-request-id'] as string) ||
       `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -61,6 +72,7 @@ export class AIController {
       deviceAuthorized: !!req.deviceId || deviceId !== 'none',
       route: '/ai/chat',
       mode: body.options?.strategy || 'default',
+      clientPlatform,
     });
   }
 
@@ -124,5 +136,64 @@ export class AIController {
   @Get('memory/stats')
   async getMemoryStats(@Request() req: any) {
     return this.memoryOrchestrator.getStats(req.user.id);
+  }
+
+  /**
+   * Register or Update Node in AIVA Compute Fabric
+   */
+  @Post('fabric/register')
+  async registerNode(@Body() body: Omit<ComputeNodeRegistration, 'lastHeartbeat'>) {
+    return this.computeNodeService.registerNode(body);
+  }
+
+  /**
+   * Node Heartbeat Ping
+   */
+  @Post('fabric/heartbeat')
+  async heartbeat(@Body() body: { deviceId: string; latencyMs?: number }) {
+    const success = this.computeNodeService.recordHeartbeat(body.deviceId, body.latencyMs);
+    return { success, deviceId: body.deviceId, timestamp: Date.now() };
+  }
+
+  /**
+   * Get Live Compute Fabric Nodes & Telemetry
+   */
+  @Get('fabric/nodes')
+  async getFabricNodes() {
+    return this.computeNodeService.listNodes();
+  }
+
+  /**
+   * Schedule Workload across Compute Fabric
+   */
+  @Post('fabric/schedule')
+  async scheduleWorkload(@Body() body: WorkloadRequest) {
+    return this.computeScheduler.schedule(body);
+  }
+
+  /**
+   * Update Node Telemetry Heartbeat
+   */
+  @Post('fabric/telemetry')
+  async updateTelemetry(
+    @Body()
+    body: {
+      nodeId: string;
+      cpuUtilizationPercent?: number;
+      gpuUtilizationPercent?: number;
+      vramUsedMb?: number;
+      ramUsedGb?: number;
+      status?: 'ONLINE' | 'BUSY' | 'OFFLINE';
+    },
+  ) {
+    return this.computeNodeService.updateTelemetry(body.nodeId, body);
+  }
+
+  /**
+   * Execute Remote Capability through Protected Remote Agent
+   */
+  @Post('remote/execute')
+  async executeRemoteCapability(@Body() body: RemoteExecutionRequest) {
+    return this.remoteAgent.executeRemoteCapability(body);
   }
 }

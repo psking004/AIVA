@@ -42,6 +42,10 @@ Thumbs.db
 
 # Local files
 *.local
+scratch/
+*.wav
+models/
+.aiva_backup_*
 
 # Runtime data
 backend/storage/uploads/

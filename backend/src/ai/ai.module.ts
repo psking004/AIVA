@@ -19,6 +19,12 @@ import { RAGService } from './memory/rag.service';
 import { IntentClassifier } from './tools/intent.classifier';
 import { ToolRegistry } from './tools/registry';
 import { EmbeddingService } from './memory/embedding.service';
+import { AivaPolicyEngine } from './policy/aiva-policy-engine';
+
+// Distributed Compute Fabric & Remote Access
+import { ComputeNodeService } from './nodes/compute-node.service';
+import { ComputeSchedulerService } from './nodes/compute-scheduler.service';
+import { RemoteAgentService } from './nodes/remote-agent.service';
 
 // Model Providers & Router
 import { OllamaProvider } from './providers/ollama.provider';
@@ -41,6 +47,7 @@ import { CalendarAgent } from './agents/calendar.agent';
 import { EmailAgent } from './agents/email.agent';
 import { ResearchAgent } from './agents/research.agent';
 import { AutomationAgent } from './agents/automation.agent';
+import { CodingAgent } from './agents/coding.agent';
 
 // Import tools
 import { TaskTool } from './tools/task.tool';
@@ -64,6 +71,7 @@ import { AIController } from './ai.controller';
     // Core AI services
     EmbeddingService,
     AIVAService,
+    AivaPolicyEngine,
     AgentOrchestrator,
     MemoryService,
     RAGService,
@@ -85,6 +93,12 @@ import { AIController } from './ai.controller';
     EmailAgent,
     ResearchAgent,
     AutomationAgent,
+    CodingAgent,
+
+    // Distributed Compute Fabric & Remote Access
+    ComputeNodeService,
+    ComputeSchedulerService,
+    RemoteAgentService,
 
     // Tools
     TaskTool,
@@ -100,10 +114,16 @@ import { AIController } from './ai.controller';
     ModelRouterService,
     EmbeddingService,
     AIVAService,
+    AivaPolicyEngine,
     AgentOrchestrator,
     MemoryService,
     RAGService,
     ToolRegistry,
+
+    // Distributed Compute Fabric & Remote Access
+    ComputeNodeService,
+    ComputeSchedulerService,
+    RemoteAgentService,
 
     // Memory & Voice exports
     ShortTermMemory,

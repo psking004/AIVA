@@ -209,6 +209,18 @@ export class ModelRouterService implements OnModuleInit {
       maxTokens: Math.min(options?.maxTokens ?? this.maxOutputTokens, this.maxOutputTokens),
     };
 
+    // Android Autonomous World: Route directly to Gemini (zero PC / Ollama dependency)
+    // unless caller explicitly requested local-first offload to PC
+    if (
+      options?.clientPlatform === 'android' &&
+      options?.strategy !== 'local-first' &&
+      options?.strategy !== 'local-only'
+    ) {
+      this.logger.debug('[AIVA ROUTER] Android client detected: routing strictly to Gemini (zero PC dependency).');
+      this.checkCloudQuota();
+      return this.executeProvider(this.geminiProvider, messages, mergedOptions, trace);
+    }
+
     const strategy = this.strategy;
 
     switch (strategy) {
@@ -256,6 +268,18 @@ export class ModelRouterService implements OnModuleInit {
       ...options,
       maxTokens: Math.min(options?.maxTokens ?? this.maxOutputTokens, this.maxOutputTokens),
     };
+
+    // Android Autonomous World: Stream directly via Gemini
+    // unless caller explicitly requested local-first offload to PC
+    if (
+      options?.clientPlatform === 'android' &&
+      options?.strategy !== 'local-first' &&
+      options?.strategy !== 'local-only'
+    ) {
+      this.logger.debug('[AIVA ROUTER] Android client detected: streaming strictly via Gemini (zero PC dependency).');
+      this.checkCloudQuota();
+      return this.geminiProvider.streamChat!(messages, onChunk, mergedOptions);
+    }
 
     const strategy = this.strategy;
 

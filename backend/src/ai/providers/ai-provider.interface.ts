@@ -29,12 +29,15 @@ export interface AIMessage {
 }
 
 export interface CompletionOptions {
-  temperature?: number;
-  maxTokens?: number;
-  topP?: number;
-  streaming?: boolean;
-  stop?: string[];
-  timeoutMs?: number;
+  temperature?: number | undefined;
+  maxTokens?: number | undefined;
+  topP?: number | undefined;
+  streaming?: boolean | undefined;
+  stop?: string[] | undefined;
+  timeoutMs?: number | undefined;
+  clientPlatform?: string | undefined;
+  strategy?: string | undefined;
+  targetNode?: string | undefined;
 }
 
 export interface ProviderResponse {

@@ -11,9 +11,10 @@ import { CalendarAgent } from './calendar.agent';
 import { EmailAgent } from './email.agent';
 import { ResearchAgent } from './research.agent';
 import { AutomationAgent } from './automation.agent';
+import { CodingAgent } from './coding.agent';
 import { MemoryService } from '../memory/memory.service';
 
-export type AgentType = 'task' | 'calendar' | 'email' | 'research' | 'automation';
+export type AgentType = 'task' | 'calendar' | 'email' | 'research' | 'automation' | 'coding';
 
 @Injectable()
 export class AgentOrchestrator {
@@ -26,6 +27,7 @@ export class AgentOrchestrator {
     emailAgent: EmailAgent,
     researchAgent: ResearchAgent,
     automationAgent: AutomationAgent,
+    codingAgent: CodingAgent,
     private memoryService: MemoryService,
   ) {
     this.agents = new Map<AgentType, any>([
@@ -34,6 +36,7 @@ export class AgentOrchestrator {
       ['email', emailAgent],
       ['research', researchAgent],
       ['automation', automationAgent],
+      ['coding', codingAgent],
     ]);
 
     this.logger.log(`Agent Orchestrator initialized with ${this.agents.size} agents`);
