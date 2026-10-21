@@ -110,7 +110,10 @@ async function request(path, options = {}) {
   return body;
 }
 
+let activeTokens = null;
+
 function saveTokens(tokens) {
+  activeTokens = tokens;
   fs.writeFileSync(
     TOKEN_FILE,
     JSON.stringify(
@@ -130,7 +133,8 @@ function loadTokens() {
   if (!fs.existsSync(TOKEN_FILE)) return null;
 
   try {
-    return JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8"));
+    activeTokens = JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8"));
+    return activeTokens;
   } catch {
     return null;
   }
@@ -211,13 +215,18 @@ async function refresh(tokens) {
   return result;
 }
 
-async function authenticated(path, options = {}, tokens) {
+async function authenticated(path, options = {}, tokens = activeTokens) {
+  const currentTokens = tokens || activeTokens || loadTokens();
+  if (!currentTokens?.accessToken) {
+    throw new Error("No authentication tokens available for request");
+  }
+
   try {
     return await request(path, {
       ...options,
       headers: {
         ...(options.headers || {}),
-        Authorization: `Bearer ${tokens.accessToken}`,
+        Authorization: `Bearer ${currentTokens.accessToken}`,
         "x-device-id": DEVICE_ID,
       },
     });
@@ -228,13 +237,13 @@ async function authenticated(path, options = {}, tokens) {
 
     console.log("Access token expired; refreshing...");
 
-    tokens = await refresh(tokens);
+    activeTokens = await refresh(currentTokens);
 
     return await request(path, {
       ...options,
       headers: {
         ...(options.headers || {}),
-        Authorization: `Bearer ${tokens.accessToken}`,
+        Authorization: `Bearer ${activeTokens.accessToken}`,
         "x-device-id": DEVICE_ID,
       },
     });
@@ -481,6 +490,7 @@ async function pollFabricWork(tokens) {
             result: execution,
           }),
         },
+        tokens,
       );
 
       console.log(

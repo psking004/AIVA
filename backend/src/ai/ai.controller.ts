@@ -32,6 +32,10 @@ export class ChatRequestDto {
   conversationId?: string;
 
   @IsOptional()
+  @IsString()
+  strategy?: string;
+
+  @IsOptional()
   @IsObject()
   options?: {
     temperature?: number;
@@ -67,14 +71,16 @@ export class AIController {
     const requestId =
       (req.headers?.['x-request-id'] as string) ||
       `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const mode = body.strategy || body.options?.strategy || 'default';
 
     return this.aivaService.chat(userId, body.message, body.conversationId, {
       requestId,
       authenticated: !!req.user,
       deviceAuthorized: !!req.deviceId || deviceId !== 'none',
       route: '/ai/chat',
-      mode: body.options?.strategy || 'default',
+      mode,
       clientPlatform,
+      sourceDeviceId: deviceId,
     });
   }
 

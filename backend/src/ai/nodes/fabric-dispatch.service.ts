@@ -1,4 +1,4 @@
-﻿import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 export type FabricWorkType =
   | 'AI_INFERENCE'
@@ -335,7 +335,7 @@ export class FabricDispatchService {
   private expireOldWork(): void {
     const now = Date.now();
 
-    for (const item of this.queue.values()) {
+    for (const [id, item] of this.queue.entries()) {
       if (
         item.status === 'QUEUED' &&
         now >= item.expiresAt
@@ -344,6 +344,12 @@ export class FabricDispatchService {
         item.completedAt = now;
 
         this.resolveCompletionWaiters(item);
+      } else if (
+        (item.status === 'COMPLETED' || item.status === 'FAILED' || item.status === 'EXPIRED') &&
+        item.completedAt &&
+        now - item.completedAt > 600_000
+      ) {
+        this.queue.delete(id);
       }
     }
   }

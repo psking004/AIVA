@@ -21,6 +21,8 @@
 import { ComputeNodeService } from './compute-node.service';
 import { ComputeSchedulerService } from './compute-scheduler.service';
 import { RemoteAgentService, RemoteExecutionRequest } from './remote-agent.service';
+import { FabricDispatchService } from './fabric-dispatch.service';
+import { FabricNodeUnavailableError } from '../aiva.service';
 import { AivaPolicyEngine } from '../policy/aiva-policy-engine';
 import { ConfigService } from '@nestjs/config';
 
@@ -476,6 +478,160 @@ async function runDistributedIndependenceTests() {
 
     const shellRes = await remoteAgent.executeRemoteCapability(shellRequest);
     assert(shellRes.status === 'BLOCKED', 'Arbitrary shell must be BLOCKED');
+  });
+
+  // Test 12: Fabric LOCAL_LLM Scheduler Routing (PC-A -> PC-B -> Cloud fallback)
+  await test('12. Fabric LOCAL_LLM Routing: PC-A online -> PC-A, PC-A offline -> PC-B, Both offline -> Cloud', () => {
+    const nodeService = new ComputeNodeService();
+    const scheduler = new ComputeSchedulerService(nodeService, policyEngine, mockConfigService);
+
+    // Both online: PC-A preferred
+    nodeService.registerNode({
+      deviceId: 'device_pc_a_test',
+      deviceName: 'psking004',
+      nodeId: 'PC-A',
+      nodeRole: 'AI_POWER_NODE',
+      cpu: { model: 'i5 13th Gen', cores: 16 },
+      memory: { totalGb: 32, availableGb: 20 },
+      gpu: { hasCuda: true, deviceCount: 1, deviceName: 'RTX 3050', vramMb: 8192, utilizationPercent: 10 },
+      models: ['qwen3.5:latest'],
+      ttsEngines: [],
+      capabilities: ['LOCAL_LLM', 'INFERENCE'],
+      status: 'ONLINE',
+    });
+
+    nodeService.registerNode({
+      deviceId: 'device_pc_b_test',
+      deviceName: 'Cosmic_004',
+      nodeId: 'PC-B',
+      nodeRole: 'CPU_LOCAL_NODE',
+      cpu: { model: 'i5-1335U', cores: 10 },
+      memory: { totalGb: 16, availableGb: 10 },
+      gpu: { hasCuda: false, deviceCount: 0, deviceName: 'None', vramMb: 0 },
+      models: ['qwen3:4b'],
+      ttsEngines: [],
+      capabilities: ['LOCAL_LLM'],
+      status: 'ONLINE',
+    });
+
+    const d1 = scheduler.schedule({
+      type: 'AI_INFERENCE',
+      sourceDeviceId: 'device_android_client',
+      sourceDeviceType: 'android',
+      privacyLevel: 'STANDARD',
+      requiredCapability: 'LOCAL_LLM',
+    });
+    assert(d1.targetNode === 'PC-A', `Expected PC-A when online, got ${d1.targetNode}`);
+    assert(d1.targetDeviceId === 'device_pc_a_test', 'Expected targetDeviceId to be PC-A device ID');
+    assert(d1.provider === 'ollama', `Expected provider ollama, got ${d1.provider}`);
+
+    // PC-A offline: PC-B selected
+    nodeService.setNodeStatus('PC-A', 'OFFLINE');
+    const d2 = scheduler.schedule({
+      type: 'AI_INFERENCE',
+      sourceDeviceId: 'device_android_client',
+      sourceDeviceType: 'android',
+      privacyLevel: 'STANDARD',
+      requiredCapability: 'LOCAL_LLM',
+    });
+    assert(d2.targetNode === 'PC-B', `Expected PC-B when PC-A offline, got ${d2.targetNode}`);
+    assert(d2.targetDeviceId === 'device_pc_b_test', 'Expected targetDeviceId to be PC-B device ID');
+    assert(d2.provider === 'ollama', `Expected provider ollama, got ${d2.provider}`);
+
+    // Both offline: Cloud fallback
+    nodeService.setNodeStatus('PC-B', 'OFFLINE');
+    const d3 = scheduler.schedule({
+      type: 'AI_INFERENCE',
+      sourceDeviceId: 'device_android_client',
+      sourceDeviceType: 'android',
+      privacyLevel: 'STANDARD',
+      requiredCapability: 'LOCAL_LLM',
+    });
+    assert(d3.targetNode === 'CLOUD', `Expected CLOUD fallback when both offline, got ${d3.targetNode}`);
+  });
+
+  // Test 13: FabricDispatchService Lifecycle: createWork -> pollWork -> completeWork -> waitForCompletion
+  await test('13. Fabric Dispatch Lifecycle: queue -> claim -> complete -> resolve waitForCompletion', async () => {
+    const dispatch = new FabricDispatchService();
+    const requestId = 'req_fabric_test_1';
+
+    const work = dispatch.createWork({
+      requestId,
+      sourceDeviceId: 'device_client_phone',
+      targetNodeId: 'PC-A',
+      targetDeviceId: 'device_pc_a_target',
+      type: 'AI_INFERENCE',
+      capability: 'LOCAL_LLM',
+      capabilityLevel: 1,
+      payload: {
+        messages: [{ role: 'user', content: 'hello' }],
+        model: 'qwen3.5:latest',
+      },
+    });
+
+    assert(work.status === 'QUEUED', `Expected QUEUED status, got ${work.status}`);
+
+    // Mismatched device poll should return null
+    const wrongPoll = dispatch.pollWork('PC-A', 'device_wrong');
+    assert(wrongPoll === null, 'Wrong device must not claim work');
+
+    // Matching device poll claims work
+    const claimed = dispatch.pollWork('PC-A', 'device_pc_a_target');
+    assert(claimed !== null, 'Matching device must claim work');
+    assert(claimed?.status === 'CLAIMED', 'Status must be CLAIMED');
+
+    // Complete work asynchronously while waitForCompletion is listening
+    const waitPromise = dispatch.waitForCompletion(requestId, 5000);
+
+    const completedItem = dispatch.completeWork(requestId, 'device_pc_a_target', {
+      content: 'Hello from PC-A Ollama!',
+      model: 'qwen3.5:latest',
+      provider: 'ollama',
+      latencyMs: 150,
+    });
+    assert(completedItem.status === 'COMPLETED', 'Status must be COMPLETED');
+
+    const result = await waitPromise;
+    assert(result.status === 'COMPLETED', `Wait result must be COMPLETED, got ${result.status}`);
+    assert(result.result?.content === 'Hello from PC-A Ollama!', 'Result content must match');
+  });
+
+  // Test 14: FabricDispatchService Failure Handling: failWork resolves waitForCompletion with FAILED
+  await test('14. Fabric Dispatch Failure Handling: failWork resolves waitForCompletion with FAILED status', async () => {
+    const dispatch = new FabricDispatchService();
+    const requestId = 'req_fabric_fail_test';
+
+    dispatch.createWork({
+      requestId,
+      sourceDeviceId: 'device_client_phone',
+      targetNodeId: 'PC-A',
+      targetDeviceId: 'device_pc_a_target',
+      type: 'AI_INFERENCE',
+      capability: 'LOCAL_LLM',
+      capabilityLevel: 1,
+      payload: { messages: [{ role: 'user', content: 'test' }] },
+    });
+
+    dispatch.claimWork(requestId, 'device_pc_a_target');
+
+    const waitPromise = dispatch.waitForCompletion(requestId, 5000);
+
+    dispatch.failWork(requestId, 'device_pc_a_target', 'Ollama process crash simulation');
+
+    const result = await waitPromise;
+    assert(result.status === 'FAILED', `Status must be FAILED, got ${result.status}`);
+    assert(result.error === 'Ollama process crash simulation', 'Error message must be preserved');
+  });
+
+  // Test 15: FabricNodeUnavailableError Contract for Local-First and Local-Only
+  await test('15. Fabric Error Semantics: FabricNodeUnavailableError distinguishes offline nodes from execution failures', () => {
+    const unavailableErr = new FabricNodeUnavailableError('No independent fabric node available for local inference: CLOUD');
+    assert(unavailableErr instanceof FabricNodeUnavailableError, 'Must be instance of FabricNodeUnavailableError');
+    assert(unavailableErr.name === 'FabricNodeUnavailableError', 'Error name must match');
+
+    // A normal execution failure is NOT an instance of FabricNodeUnavailableError
+    const executionErr = new Error('Fabric inference ended with status FAILED');
+    assert(!(executionErr instanceof FabricNodeUnavailableError), 'Execution error must not match FabricNodeUnavailableError');
   });
 
   console.log('\n============================================================');

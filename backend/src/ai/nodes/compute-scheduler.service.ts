@@ -14,7 +14,7 @@ import { ComputeNodeService, NodeId, NodeRole } from './compute-node.service';
 import { AivaPolicyEngine } from '../policy/aiva-policy-engine';
 
 export interface WorkloadRequest {
-  type: 'HEAVY_INFERENCE' | 'LIGHT_INFERENCE' | 'CODING' | 'FILE_OPS' | 'EMBEDDINGS' | 'TTS';
+  type: 'HEAVY_INFERENCE' | 'LIGHT_INFERENCE' | 'CODING' | 'FILE_OPS' | 'EMBEDDINGS' | 'TTS' | 'AI_INFERENCE';
   sourceDeviceId: string;
   sourceDeviceType: 'android' | 'desktop' | 'web';
   privacyLevel: 'PUBLIC' | 'STANDARD' | 'PRIVATE';

@@ -29,6 +29,13 @@ import {
   printAivaBackendTrace,
 } from './ai-backend-trace';
 
+export class FabricNodeUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'FabricNodeUnavailableError';
+  }
+}
+
 @Injectable()
 export class AIVAService {
   private readonly logger = new Logger(AIVAService.name);
@@ -77,14 +84,17 @@ export class AIVAService {
     latencyMs?: number;
   }> {
     const sourceDeviceId =
-      metadata?.sourceDeviceId ||
-      `aiva-${userId}`;
+      metadata?.sourceDeviceId && metadata.sourceDeviceId !== 'none'
+        ? metadata.sourceDeviceId
+        : `aiva-${userId}`;
 
     const sourceDeviceType:
       'android' | 'desktop' | 'web' =
       metadata?.clientPlatform === 'android'
         ? 'android'
-        : 'desktop';
+        : metadata?.clientPlatform === 'web'
+          ? 'web'
+          : 'desktop';
 
     const privacyLevel:
       'PUBLIC' | 'STANDARD' | 'PRIVATE' =
@@ -96,7 +106,7 @@ export class AIVAService {
 
     const decision =
       this.computeScheduler.schedule({
-        type: 'LIGHT_INFERENCE',
+        type: 'AI_INFERENCE',
         sourceDeviceId,
         sourceDeviceType,
         privacyLevel,
@@ -104,14 +114,14 @@ export class AIVAService {
       });
 
     this.logger.log(
-      `[FABRIC] ${sourceDeviceId} -> ${decision.targetNode}`,
+      `[FABRIC] ${sourceDeviceId} -> ${decision.targetNode} (${decision.routingReason})`,
     );
 
     if (
       decision.targetNode === 'CLOUD' ||
       decision.targetNode === 'LOCAL_STANDALONE'
     ) {
-      throw new Error(
+      throw new FabricNodeUnavailableError(
         `No independent fabric node available for local inference: ${decision.targetNode}`,
       );
     }
@@ -224,6 +234,7 @@ export class AIVAService {
       route?: string;
       mode?: string;
       clientPlatform?: string;
+      sourceDeviceId?: string;
     },
   ): Promise<AIVAConversationResponse> {
     const startTime = Date.now();
@@ -271,7 +282,14 @@ export class AIVAService {
         trace.tool_execution = response.toolCalls?.length > 0 ? 'executed' : 'completed';
       } else {
         trace.failure_stage = 'direct_model_inference';
-        response = await this.handleDirectResponse(userId, message, trace, metadata?.clientPlatform, metadata?.mode);
+        response = await this.handleDirectResponse(
+          userId,
+          message,
+          trace,
+          metadata?.clientPlatform,
+          metadata?.mode,
+          metadata?.sourceDeviceId,
+        );
       }
 
       // 5. Write assistant turn to memory layers
@@ -394,6 +412,7 @@ export class AIVAService {
     trace?: AivaBackendTrace,
     clientPlatform?: string,
     mode?: string,
+    sourceDeviceId?: string,
   ): Promise<AIVAConversationResponse> {
     // Build augmented prompt with all memory layers
     const augmentedPrompt = await this.memoryOrchestrator.buildPrompt(
@@ -433,12 +452,18 @@ export class AIVAService {
           {
             ...(clientPlatform ? { clientPlatform } : {}),
             mode: requestedMode,
-            sourceDeviceId: trace?.requestId || `aiva-${userId}`,
+            sourceDeviceId: sourceDeviceId || `aiva-${userId}`,
           },
         );
 
         if (fabricResponse) {
           response = fabricResponse;
+          if (trace) {
+            trace.provider_selected = response.provider;
+            trace.model_selected = response.model;
+            trace.provider_latency = response.latencyMs || 0;
+            trace.provider_response_valid = true;
+          }
         } else {
           if (requestedMode === 'local-only') {
             throw new Error(
@@ -462,8 +487,17 @@ export class AIVAService {
           throw fabricError;
         }
 
+        const isUnavailable = fabricError instanceof FabricNodeUnavailableError;
+        if (!isUnavailable) {
+          this.logger.error(
+            `[FABRIC ERROR] Execution failed on assigned node: ${fabricError?.message || fabricError}`,
+            fabricError?.stack,
+          );
+          throw fabricError;
+        }
+
         this.logger.warn(
-          `Distributed fabric unavailable; falling back to ModelRouter: ${fabricError?.message || fabricError}`,
+          `[FABRIC UNAVAILABLE] Local nodes offline or unavailable; falling back to ModelRouter: ${fabricError?.message || fabricError}`,
         );
 
         response = await this.modelRouter.chat(
