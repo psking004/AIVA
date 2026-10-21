@@ -20,6 +20,8 @@ import { ToolRegistry } from './tools/registry';
 import { IntentClassifier, ClassifiedIntent } from './tools/intent.classifier';
 import { AIVA_SYSTEM_PROMPT } from './personality/aiva-personality';
 import { ModelRouterService } from './router/model-router.service';
+import { ComputeSchedulerService } from './nodes/compute-scheduler.service';
+import { FabricDispatchService } from './nodes/fabric-dispatch.service';
 import { AIMessage } from './providers/ai-provider.interface';
 import {
   AivaBackendTrace,
@@ -39,6 +41,9 @@ export class AIVAService {
     private toolRegistry: ToolRegistry,
     private intentClassifier: IntentClassifier,
     private modelRouter: ModelRouterService,
+    private computeScheduler: ComputeSchedulerService,
+    private fabricDispatch: FabricDispatchService,
+
   ) {
     this.logger.log('AIVA Core Service initialized with Model Router orchestration');
   }
@@ -47,6 +52,167 @@ export class AIVAService {
    * Process a user message and generate response
    * Uses 3-layer memory for context-aware responses
    */
+  /**
+   * Execute chat inference on an independent AIVA compute node.
+   *
+   * The scheduler decides the node.
+   * FabricDispatchService transports the work.
+   * The node worker performs the actual local inference.
+   */
+  private async executeFabricChat(
+    userId: string,
+    message: string,
+    metadata?: {
+      clientPlatform?: string;
+      mode?: string;
+      sourceDeviceId?: string;
+      privacyLevel?: string;
+    },
+  ): Promise<{
+    content: string;
+    provider: string;
+    model: string;
+    targetNode: string;
+    targetDeviceId: string;
+    latencyMs?: number;
+  }> {
+    const sourceDeviceId =
+      metadata?.sourceDeviceId ||
+      `aiva-${userId}`;
+
+    const sourceDeviceType:
+      'android' | 'desktop' | 'web' =
+      metadata?.clientPlatform === 'android'
+        ? 'android'
+        : 'desktop';
+
+    const privacyLevel:
+      'PUBLIC' | 'STANDARD' | 'PRIVATE' =
+      metadata?.privacyLevel === 'PRIVATE'
+        ? 'PRIVATE'
+        : metadata?.privacyLevel === 'PUBLIC'
+          ? 'PUBLIC'
+          : 'STANDARD';
+
+    const decision =
+      this.computeScheduler.schedule({
+        type: 'LIGHT_INFERENCE',
+        sourceDeviceId,
+        sourceDeviceType,
+        privacyLevel,
+        requiredCapability: 'LOCAL_LLM',
+      });
+
+    this.logger.log(
+      `[FABRIC] ${sourceDeviceId} -> ${decision.targetNode}`,
+    );
+
+    if (
+      decision.targetNode === 'CLOUD' ||
+      decision.targetNode === 'LOCAL_STANDALONE'
+    ) {
+      throw new Error(
+        `No independent fabric node available for local inference: ${decision.targetNode}`,
+      );
+    }
+
+    if (
+      !decision.targetDeviceId ||
+      !decision.targetNode
+    ) {
+      throw new Error(
+        'Fabric scheduler returned an invalid target',
+      );
+    }
+
+    const requestId =
+      `fabric-chat-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 10)}`;
+
+    const work =
+      this.fabricDispatch.createWork({
+        requestId,
+        sourceDeviceId,
+        targetNodeId:
+          decision.targetNode as
+            | 'PC-A'
+            | 'PC-B'
+            | 'ANDROID'
+            | 'CLOUD',
+        targetDeviceId:
+          decision.targetDeviceId,
+        type: 'AI_INFERENCE',
+        capability: 'LOCAL_LLM',
+        capabilityLevel: 1,
+        payload: {
+          model: decision.model,
+          messages: [
+            {
+              role: 'user',
+              content: message,
+            },
+          ],
+          temperature: 0.7,
+          maxTokens: 2048,
+        },
+        ttlMs: 120_000,
+      });
+
+    this.logger.log(
+      `[FABRIC] Work queued: ${work.requestId} -> ${work.targetNodeId}`,
+    );
+
+    const completed =
+      await this.fabricDispatch.waitForCompletion(
+        requestId,
+        120_000,
+      );
+
+    if (completed.status !== 'COMPLETED') {
+      throw new Error(
+        completed.error ||
+          `Fabric inference ended with status ${completed.status}`,
+      );
+    }
+
+    const result = completed.result;
+
+    if (!result?.content) {
+      throw new Error(
+        'Fabric worker completed without response content',
+      );
+    }
+
+    const response: {
+      content: string;
+      provider: string;
+      model: string;
+      targetNode: string;
+      targetDeviceId: string;
+      latencyMs?: number;
+    } = {
+      content: String(result.content),
+      provider:
+        result.provider ||
+        decision.provider ||
+        'ollama',
+      model:
+        result.model ||
+        decision.model ||
+        'unknown',
+      targetNode:
+        decision.targetNode,
+      targetDeviceId:
+        decision.targetDeviceId,
+    };
+
+    if (typeof result.latencyMs === 'number') {
+      response.latencyMs = result.latencyMs;
+    }
+
+    return response;
+  }
   async chat(
     userId: string,
     message: string,
@@ -242,16 +408,87 @@ export class AIVAService {
     }));
 
     // Generate response via AIVA Model Router
-    const response = await this.modelRouter.chat(
-      messages,
-      {
-        temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
-        maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
-        clientPlatform,
-        strategy: mode as any,
-      },
-      trace,
-    );
+    let response: {
+      content: string;
+      model: string;
+      provider: string;
+      latencyMs?: number;
+    };
+
+    const requestedMode = mode || 'default';
+
+    // Distributed fabric is authoritative for explicit local execution.
+    // For local-first/auto, use fabric when a local node is available,
+    // otherwise preserve the existing ModelRouter cloud fallback.
+    const shouldTryFabric =
+      requestedMode === 'local-first' ||
+      requestedMode === 'auto' ||
+      requestedMode === 'local-only';
+
+    if (shouldTryFabric) {
+      try {
+        const fabricResponse = await this.executeFabricChat(
+          userId,
+          message,
+          {
+            ...(clientPlatform ? { clientPlatform } : {}),
+            mode: requestedMode,
+            sourceDeviceId: trace?.requestId || `aiva-${userId}`,
+          },
+        );
+
+        if (fabricResponse) {
+          response = fabricResponse;
+        } else {
+          if (requestedMode === 'local-only') {
+            throw new Error(
+              'LOCAL_ONLY requested but no local fabric node was available.',
+            );
+          }
+
+          response = await this.modelRouter.chat(
+            messages,
+            {
+              temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
+              maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
+              clientPlatform,
+              strategy: mode as any,
+            },
+            trace,
+          );
+        }
+      } catch (fabricError: any) {
+        if (requestedMode === 'local-only') {
+          throw fabricError;
+        }
+
+        this.logger.warn(
+          `Distributed fabric unavailable; falling back to ModelRouter: ${fabricError?.message || fabricError}`,
+        );
+
+        response = await this.modelRouter.chat(
+          messages,
+          {
+            temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
+            maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
+            clientPlatform,
+            strategy: mode as any,
+          },
+          trace,
+        );
+      }
+    } else {
+      response = await this.modelRouter.chat(
+        messages,
+        {
+          temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
+          maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
+          clientPlatform,
+          strategy: mode as any,
+        },
+        trace,
+      );
+    }
 
     // Create conversation if needed
     const conversationId = await this.memoryService.getOrCreateConversation(userId);
@@ -350,7 +587,7 @@ ${content}`;
       userId,
       content: 'Session ended by user',
     });
-    this.logger.log(`Session ended for user ${userId} — summary stored in long-term memory`);
+    this.logger.log(`Session ended for user ${userId} â€” summary stored in long-term memory`);
   }
 
   /**

@@ -21,6 +21,7 @@ import { IsString, IsOptional, IsObject } from 'class-validator';
 import { ComputeNodeService, type ComputeNodeRegistration } from './nodes/compute-node.service';
 import { ComputeSchedulerService, WorkloadRequest } from './nodes/compute-scheduler.service';
 import { RemoteAgentService, RemoteExecutionRequest } from './nodes/remote-agent.service';
+import { FabricDispatchService } from './nodes/fabric-dispatch.service';
 
 export class ChatRequestDto {
   @IsString()
@@ -49,6 +50,7 @@ export class AIController {
     private readonly computeNodeService: ComputeNodeService,
     private readonly computeScheduler: ComputeSchedulerService,
     private readonly remoteAgent: RemoteAgentService,
+    private readonly fabricDispatch: FabricDispatchService,
   ) {}
 
   /**
@@ -192,6 +194,139 @@ export class AIController {
   /**
    * Execute Remote Capability through Protected Remote Agent
    */
+
+  /**
+   * Poll for work assigned to the authenticated compute node.
+   */
+  @Post('fabric/work/poll')
+  async pollFabricWork(
+    @Request() req: any,
+    @Body() body: {
+      nodeId: 'PC-A' | 'PC-B' | 'ANDROID' | 'CLOUD';
+    },
+  ) {
+    const deviceId =
+      req.deviceId ||
+      req.headers?.['x-device-id'];
+
+    if (!deviceId) {
+      throw new Error('Authenticated device ID is required');
+    }
+
+    if (!body?.nodeId) {
+      throw new Error('nodeId is required');
+    }
+
+    const node = this.computeNodeService.getNode(deviceId);
+
+    if (!node) {
+      throw new Error('Device is not registered with the compute fabric');
+    }
+
+    if (node.nodeId !== body.nodeId) {
+      throw new Error('Authenticated device/node mismatch');
+    }
+
+    if (node.status !== 'ONLINE') {
+      return {
+        work: null,
+        reason: 'NODE_OFFLINE',
+        timestamp: Date.now(),
+      };
+    }
+
+    return {
+      work: this.fabricDispatch.claimWork(
+        deviceId,
+        body.nodeId,
+      ),
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Submit successful node execution.
+   */
+  @Post('fabric/work/complete')
+  async completeFabricWork(
+    @Request() req: any,
+    @Body()
+    body: {
+      requestId: string;
+      result?: {
+        content?: string;
+        model?: string;
+        provider?: string;
+        latencyMs?: number;
+      };
+    },
+  ) {
+    const deviceId =
+      req.deviceId ||
+      req.headers?.['x-device-id'];
+
+    if (!deviceId) {
+      throw new Error('Authenticated device ID is required');
+    }
+
+    if (!body?.requestId) {
+      throw new Error('requestId is required');
+    }
+
+    const work = this.fabricDispatch.completeWork(
+      body.requestId,
+      deviceId,
+      body.result,
+    );
+
+    return {
+      success: true,
+      requestId: work.requestId,
+      status: work.status,
+      result: work.result,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Submit failed node execution.
+   */
+  @Post('fabric/work/fail')
+  async failFabricWork(
+    @Request() req: any,
+    @Body()
+    body: {
+      requestId: string;
+      error: string;
+    },
+  ) {
+    const deviceId =
+      req.deviceId ||
+      req.headers?.['x-device-id'];
+
+    if (!deviceId) {
+      throw new Error('Authenticated device ID is required');
+    }
+
+    if (!body?.requestId) {
+      throw new Error('requestId is required');
+    }
+
+    const work = this.fabricDispatch.failWork(
+      body.requestId,
+      deviceId,
+      body.error || 'Unknown node execution error',
+    );
+
+    return {
+      success: true,
+      requestId: work.requestId,
+      status: work.status,
+      error: work.error,
+      timestamp: Date.now(),
+    };
+  }
+
   @Post('remote/execute')
   async executeRemoteCapability(@Body() body: RemoteExecutionRequest) {
     return this.remoteAgent.executeRemoteCapability(body);

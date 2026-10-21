@@ -5,7 +5,7 @@
  * - Model Orchestration & Routing (Local Ollama Qwen3 8B + Cloud OpenRouter Qwen + Cloud Google Gemini)
  * - Agent routing
  * - Memory management (3-layer: short-term, session, long-term)
- * - Voice pipeline (wake word → STT → LLM → TTS)
+ * - Voice pipeline (wake word â†’ STT â†’ LLM â†’ TTS)
  * - Personality system
  * - Tool execution
  * - RAG pipeline
@@ -25,6 +25,7 @@ import { AivaPolicyEngine } from './policy/aiva-policy-engine';
 import { ComputeNodeService } from './nodes/compute-node.service';
 import { ComputeSchedulerService } from './nodes/compute-scheduler.service';
 import { RemoteAgentService } from './nodes/remote-agent.service';
+import { FabricDispatchService } from './nodes/fabric-dispatch.service';
 
 // Model Providers & Router
 import { OllamaProvider } from './providers/ollama.provider';
@@ -99,6 +100,7 @@ import { AIController } from './ai.controller';
     ComputeNodeService,
     ComputeSchedulerService,
     RemoteAgentService,
+    FabricDispatchService,
 
     // Tools
     TaskTool,
@@ -124,6 +126,7 @@ import { AIController } from './ai.controller';
     ComputeNodeService,
     ComputeSchedulerService,
     RemoteAgentService,
+    FabricDispatchService,
 
     // Memory & Voice exports
     ShortTermMemory,
