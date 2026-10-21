@@ -115,6 +115,40 @@ export class ComputeSchedulerService {
       };
     }
 
+    // 2. Explicit capability routing
+    // LOCAL_LLM must prefer an available local node before cloud fallback.
+    if (request.requiredCapability === 'LOCAL_LLM') {
+      if (powerNode && powerNode.status === 'ONLINE' &&
+          (powerNode.models?.length ?? 0) > 0 &&
+          (powerNode.gpu?.utilizationPercent ?? 0) < 90) {
+        return {
+          targetNode: powerNode.nodeId,
+          targetDeviceId: powerNode.deviceId,
+          nodeRole: powerNode.nodeRole,
+          provider: 'ollama',
+          model: powerNode.models?.[0] || 'qwen3.5:latest',
+          routingReason: `${powerNode.nodeId} selected for explicit LOCAL_LLM capability.`,
+          isRemote: request.sourceDeviceId !== powerNode.deviceId,
+          estimatedCost: 0,
+          score: 99,
+        };
+      }
+
+      if (cpuNode && cpuNode.status === 'ONLINE' &&
+          (cpuNode.models?.length ?? 0) > 0) {
+        return {
+          targetNode: cpuNode.nodeId,
+          targetDeviceId: cpuNode.deviceId,
+          nodeRole: cpuNode.nodeRole,
+          provider: 'ollama',
+          model: cpuNode.models?.[0] || 'qwen3:4b',
+          routingReason: `${cpuNode.nodeId} selected for explicit LOCAL_LLM capability.`,
+          isRemote: request.sourceDeviceId !== cpuNode.deviceId,
+          estimatedCost: 0,
+          score: 95,
+        };
+      }
+    }
     // 2. Android Standard Route (PC-Off World Resilience)
     if (request.sourceDeviceType === 'android') {
       // If Android requests heavy inference or coding, AND an AI Power Node is online with available capacity:
