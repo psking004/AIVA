@@ -235,11 +235,14 @@ export class AIController {
       };
     }
 
+    const work = this.fabricDispatch.pollWork(
+      body.nodeId,
+      deviceId,
+    );
+
     return {
-      work: this.fabricDispatch.claimWork(
-        deviceId,
-        body.nodeId,
-      ),
+      work,
+      reason: work ? 'WORK_CLAIMED' : 'NO_WORK',
       timestamp: Date.now(),
     };
   }
