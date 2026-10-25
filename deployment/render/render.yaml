@@ -32,7 +32,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false # Set your Google Gemini API Key
       - key: GEMINI_MODEL
-        value: gemini-1.5-flash
+        value: gemini-3.5-flash
       - key: AIVA_ROUTING_STRATEGY
         value: cloud-first # Cloud backend operates independently of Windows PC
       - key: AIVA_CLOUD_PROVIDER

@@ -35,7 +35,7 @@ export class GeminiProvider implements AIProvider {
 
   get defaultModel(): string {
     const configured = this.configService.get<string>('GEMINI_MODEL');
-    if (!configured || configured === 'gemini-3.8-flash' || configured === 'gemini-2.0-flash' || configured === 'gemini-flash-latest') {
+    if (!configured || !configured.startsWith('gemini-3') || configured === 'gemini-3.8-flash') {
       return 'gemini-3.5-flash';
     }
     return configured;
