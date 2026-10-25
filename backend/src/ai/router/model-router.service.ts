@@ -210,7 +210,7 @@ export class ModelRouterService implements OnModuleInit {
     };
 
     // Android Autonomous World: Route directly to Gemini (zero PC / Ollama dependency)
-    // unless caller explicitly requested local-first offload to PC
+    // with automatic resilient fallback to secondary cloud (OpenRouter)
     if (
       options?.clientPlatform === 'android' &&
       options?.strategy !== 'local-first' &&
@@ -218,7 +218,12 @@ export class ModelRouterService implements OnModuleInit {
     ) {
       this.logger.debug('[AIVA ROUTER] Android client detected: routing strictly to Gemini (zero PC dependency).');
       this.checkCloudQuota();
-      return this.executeProvider(this.geminiProvider, messages, mergedOptions, trace);
+      try {
+        return await this.executeProvider(this.geminiProvider, messages, mergedOptions, trace);
+      } catch (geminiError: any) {
+        this.logger.warn(`Gemini cloud execution failed for Android (${geminiError.message}). Falling back to secondary cloud provider (OpenRouter)...`);
+        return await this.executeProvider(this.openRouterProvider, messages, mergedOptions, trace);
+      }
     }
 
     const strategy =

@@ -52,3 +52,10 @@ backend/storage/uploads/
 storage/uploads/
 backend/data/long_term_memory.json
 backend/data/rag_vectors.json
+ 
+# Tokens and Local Node Identity
+.aiva_*tokens*.json
+*.tokens.json
+.aiva_pc_b_identity.json
+backend/tsconfig.json.bak
+scripts/*.backup

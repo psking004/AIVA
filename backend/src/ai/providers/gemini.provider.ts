@@ -34,12 +34,16 @@ export class GeminiProvider implements AIProvider {
   }
 
   get defaultModel(): string {
-    return this.configService.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash';
+    const configured = this.configService.get<string>('GEMINI_MODEL');
+    if (!configured || configured === 'gemini-3.8-flash' || configured === 'gemini-2.0-flash' || configured === 'gemini-flash-latest') {
+      return 'gemini-3.5-flash';
+    }
+    return configured;
   }
 
   get timeoutMs(): number {
     const configured = this.configService.get<string>('GEMINI_TIMEOUT_MS');
-    return configured ? parseInt(configured, 10) : 45000;
+    return configured ? parseInt(configured, 10) : 15000;
   }
 
   private get baseUrl(): string {
@@ -111,8 +115,8 @@ export class GeminiProvider implements AIProvider {
       );
     }
 
-    const model = this.defaultModel;
-    const timeout = options?.timeoutMs || this.timeoutMs;
+    const model = options?.model || this.defaultModel;
+    const timeout = Math.min(options?.timeoutMs || this.timeoutMs, 15000);
     const url = `${this.baseUrl}/models/${model}:generateContent?key=${this.apiKey}`;
 
     this.logger.debug(`Calling Gemini API for model ${model}`);

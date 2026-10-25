@@ -554,6 +554,7 @@ export class AIVAService {
       context: await this.memoryService.getConversationContext(userId, conversationId),
       model: response.model,
       provider: response.provider,
+      target: (response as any).targetNode || (response as any).target || undefined,
     };
   }
 
