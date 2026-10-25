@@ -59,3 +59,9 @@ backend/data/rag_vectors.json
 .aiva_pc_b_identity.json
 backend/tsconfig.json.bak
 scripts/*.backup
+
+apps/mobile/.expo/
+apps/mobile/android/build/
+apps/mobile/android/app/build/
+apps/mobile/android/.gradle/
+apps/mobile/wakeword_backup/

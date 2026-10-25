@@ -106,7 +106,7 @@ class TwoStageWakeWordDetector(
         val amplitudeMatch = (avgAmplitude in 500.0..18000.0)
 
         if (zcrMatch && amplitudeMatch) {
-            val normalizedScore = (0.75f + (avgAmplitude / 25000.0f).coerceAtMost(0.20f)).toFloat()
+            val normalizedScore = (0.75 + (avgAmplitude / 25000.0).coerceAtMost(0.20)).toFloat()
             return normalizedScore
         }
 

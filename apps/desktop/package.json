@@ -37,21 +37,20 @@
     "files": [
       "main.js",
       "preload.js",
+      "assets/**/*",
       "renderer/**/*"
     ],
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "artifactName": "AIVA-Windows-Setup.${ext}"
     },
-    "mac": {
-      "target": "dmg",
-      "icon": "assets/icon.icns",
-      "category": "public.app-category.productivity"
-    },
-    "linux": {
-      "target": "AppImage",
-      "icon": "assets/icon.png",
-      "category": "Utility"
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AIVA"
     }
   }
 }
