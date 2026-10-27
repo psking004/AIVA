@@ -16,6 +16,11 @@ import {
   Text,
   StyleSheet,
   StatusBar,
+  TextInput,
+  TouchableOpacity,
+  Platform,
+  PermissionsAndroid,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -37,6 +42,8 @@ export default function MobileHomeScreen() {
   const [audioLevel, setAudioLevel] = useState(0);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [currentTime, setCurrentTime] = useState('');
+  const [textInput, setTextInput] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
   const lipSyncAnimRef = useRef<number | null>(null);
   const dormancyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -179,10 +186,40 @@ export default function MobileHomeScreen() {
     [clearTimers, speakResponse]
   );
 
+  const handleSendText = async () => {
+    if (!textInput.trim() || isSending) return;
+    const msg = textInput.trim();
+    setTextInput('');
+    setIsSending(true);
+    await handleProcessVoiceCommand(msg);
+    setIsSending(false);
+  };
+
   // Background Wake-Word integration ("AIVA")
   useEffect(() => {
-    // Start background wake word detector
-    wakeWordService.startListening('BALANCED');
+    const initWakeWord = async () => {
+      try {
+        if (Platform.OS === 'android') {
+          const granted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+            {
+              title: 'AIVA Voice Assistant',
+              message: 'AIVA requires microphone access for hands-free "AIVA" wake-word detection.',
+              buttonPositive: 'Allow',
+            }
+          );
+          if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+            await wakeWordService.startListening('BALANCED');
+          }
+        } else {
+          await wakeWordService.startListening('BALANCED');
+        }
+      } catch (err) {
+        console.warn('[AIVA Mobile] Wake-word start error:', err);
+      }
+    };
+
+    initWakeWord();
 
     const unsubscribe = wakeWordService.subscribe((state) => {
       if (state === 'WAKE_WORD_DETECTED' || state === 'LISTENING') {
@@ -212,7 +249,13 @@ export default function MobileHomeScreen() {
       </View>
 
       {/* 2. Central Floating Holographic AI Face (Hidden when DORMANT) */}
-      <View style={styles.faceCenterContainer}>
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={() => {
+          if (presenceState === 'DORMANT') wakeAivaPresence();
+        }}
+        style={styles.faceCenterContainer}
+      >
         <AivaMobileFace
           state={faceState}
           presenceState={presenceState}
@@ -220,10 +263,40 @@ export default function MobileHomeScreen() {
           audioLevel={audioLevel}
           isSpeaking={isSpeaking}
         />
-      </View>
+      </TouchableOpacity>
 
-      {/* 3. Empty Minimal Spacer (Zero permanent UI or navigation) */}
-      <View style={styles.bottomSpacer} />
+      {/* 3. Text & Voice Conduit Bar */}
+      {presenceState === 'ACTIVE' ? (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.inputContainer}
+        >
+          <TextInput
+            value={textInput}
+            onChangeText={setTextInput}
+            onSubmitEditing={handleSendText}
+            placeholder="Command AIVA (voice or text)..."
+            placeholderTextColor="#64748B"
+            style={styles.textInput}
+            editable={!isSending}
+            returnKeyType="send"
+          />
+          <TouchableOpacity
+            onPress={handleSendText}
+            disabled={isSending || !textInput.trim()}
+            style={[styles.sendButton, (!textInput.trim() || isSending) && styles.sendButtonDisabled]}
+          >
+            <Text style={styles.sendButtonText}>{isSending ? '...' : 'Send'}</Text>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
+      ) : (
+        <TouchableOpacity
+          onPress={() => wakeAivaPresence()}
+          style={styles.dormantTouchHint}
+        >
+          <Text style={styles.touchHintText}>Say "AIVA" or tap to wake</Text>
+        </TouchableOpacity>
+      )}
 
       {/* 4. Contextual UI Sheet (Summoned strictly via voice commands) */}
       <ContextualSheet
@@ -269,7 +342,46 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bottomSpacer: {
-    height: 24,
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+    marginBottom: 8,
+  },
+  textInput: {
+    flex: 1,
+    color: '#F8FAFC',
+    fontSize: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  sendButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#2563EB',
+    borderRadius: 10,
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#334155',
+  },
+  sendButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  dormantTouchHint: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  touchHintText: {
+    color: '#475569',
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
 });

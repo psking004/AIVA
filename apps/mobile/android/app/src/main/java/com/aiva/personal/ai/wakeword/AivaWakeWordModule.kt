@@ -55,6 +55,16 @@ class AivaWakeWordModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun startWakeWord(batteryMode: String, promise: Promise) {
         try {
+            val hasMicPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+                reactContext,
+                android.Manifest.permission.RECORD_AUDIO
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+            if (!hasMicPermission) {
+                promise.reject("PERMISSION_DENIED", "Microphone permission RECORD_AUDIO has not been granted yet.")
+                return
+            }
+
             val intent = Intent(reactContext, AivaWakeWordForegroundService::class.java).apply {
                 action = AivaWakeWordForegroundService.ACTION_START
                 putExtra(AivaWakeWordForegroundService.EXTRA_BATTERY_MODE, batteryMode)

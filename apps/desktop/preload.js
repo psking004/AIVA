@@ -32,6 +32,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('desktop-log-entry', handler);
   },
 
+  // Voice & Wake-word IPC
+  onVoiceTranscript: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('desktop-voice-transcript', handler);
+    return () => ipcRenderer.removeListener('desktop-voice-transcript', handler);
+  },
+  onVoiceState: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('desktop-voice-state', handler);
+    return () => ipcRenderer.removeListener('desktop-voice-state', handler);
+  },
+  notifyVoiceLifecycle: (state) => ipcRenderer.invoke('set-voice-session-state', state),
+  getWakeWordStatus: () => ipcRenderer.invoke('get-wake-word-status'),
+
+  // Desktop overlay & Mouse passthrough
+  setIgnoreMouseEvents: (ignore, options) =>
+    ipcRenderer.invoke('set-ignore-mouse-events', ignore, options),
+  setDesktopOverlayMode: (mode) =>
+    ipcRenderer.invoke('set-desktop-overlay-mode', mode),
+
+  // Version
+  getVersion: () => ipcRenderer.invoke('get-app-version'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+
   // Window frame controls
   minimizeWindow: () => ipcRenderer.invoke('window-minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window-maximize'),

@@ -102,6 +102,31 @@ let workerStats = {
   lastCompletedRequestId: null,
 };
 
+// Voice state variables & daemons
+let speechProcess = null;
+let whisperProcess = null;
+let kokoroProcess = null;
+let isWhisperReady = false;
+let isKokoroReady = false;
+let voiceSessionActive = false;
+let voiceState = 'DORMANT';
+let sessionWatchdogTimer = null;
+
+function resetVoiceSession(reason = '') {
+  voiceSessionActive = false;
+  voiceState = 'DORMANT';
+  if (sessionWatchdogTimer) {
+    clearTimeout(sessionWatchdogTimer);
+    sessionWatchdogTimer = null;
+  }
+  if (reason) {
+    logEvent('info', `Voice session reset: ${reason}`);
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('desktop-voice-state', { state: 'DORMANT' });
+  }
+}
+
 // 1. DYNAMIC HARDWARE & CAPABILITY DETECTION (NO HARDCODED HOSTNAMES)
 function detectHardware() {
   const totalRamGb = Number((os.totalmem() / (1024 ** 3)).toFixed(2));
@@ -570,6 +595,223 @@ function getFabricStatusPayload() {
   };
 }
 
+// 6b. VOICE SUBSYSTEMS (NATIVE WAKE-WORD, WHISPER STT, KOKORO TTS)
+function startSpeechRecognition() {
+  const scriptPath = path.join(__dirname, 'speech-listener.ps1');
+  if (!fs.existsSync(scriptPath)) {
+    logEvent('warn', 'Speech listener script not found: ' + scriptPath);
+    return;
+  }
+
+  logEvent('info', 'Initializing native Windows wake-word listener (AIVA)...');
+  speechProcess = spawn('powershell.exe', [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    scriptPath,
+  ]);
+
+  speechProcess.stdout.on('data', (data) => {
+    const raw = data.toString().trim();
+    if (!raw) return;
+
+    const lines = raw.split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.type === 'ready') {
+          logEvent('info', 'Native wake-word listener ready: ' + parsed.status);
+        } else if (parsed.type === 'wake') {
+          if (voiceState === 'RECORDING_COMMAND' || voiceState === 'TRANSCRIBING') {
+            continue;
+          }
+
+          const wakeIpcMs = Date.now();
+          const audioDetectedMs = parsed.audioDetectedMs || parsed.confirmedMs || wakeIpcMs;
+          const confirmedMs = parsed.confirmedMs || wakeIpcMs;
+          const totalWakeLatency = wakeIpcMs - audioDetectedMs;
+
+          logEvent('info', `Wake word "AIVA" detected (confidence: ${parsed.confidence}, latency: ${totalWakeLatency}ms)`);
+
+          voiceSessionActive = true;
+          voiceState = 'LISTENING';
+
+          if (sessionWatchdogTimer) {
+            clearTimeout(sessionWatchdogTimer);
+            sessionWatchdogTimer = null;
+          }
+          sessionWatchdogTimer = setTimeout(() => {
+            if (voiceSessionActive && (voiceState === 'LISTENING' || voiceState === 'RECORDING_COMMAND')) {
+              logEvent('warn', `Voice watchdog timeout (${voiceState}) — resetting to DORMANT`);
+              resetVoiceSession('watchdog timeout');
+            }
+          }, 30000);
+
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('desktop-voice-state', { state: 'LISTENING' });
+            mainWindow.webContents.send('desktop-voice-transcript', {
+              text: 'AIVA',
+              confidence: parsed.confidence || 1.0,
+              isFinal: true,
+              isWake: true,
+              audioDetectedMs,
+              confirmedMs,
+              wakeIpcMs,
+            });
+          }
+
+          if (whisperProcess && whisperProcess.stdin.writable) {
+            whisperProcess.stdin.write(JSON.stringify({ command: 'record_and_transcribe' }) + '\n');
+          }
+        } else if (parsed.type === 'error') {
+          logEvent('warn', 'Speech listener error: ' + parsed.message);
+        }
+      } catch (_) {}
+    }
+  });
+
+  speechProcess.stderr.on('data', (data) => {
+    const msg = data.toString().trim();
+    if (msg) logEvent('warn', 'Speech listener stderr: ' + msg);
+  });
+
+  speechProcess.on('close', (code) => {
+    logEvent('info', `Speech listener exited with code ${code}`);
+    speechProcess = null;
+    if (!app.isQuitting) {
+      setTimeout(startSpeechRecognition, 3000);
+    }
+  });
+}
+
+function startWhisperSTT() {
+  const scriptPath = path.join(__dirname, 'whisper-service.py');
+  if (!fs.existsSync(scriptPath)) {
+    logEvent('warn', 'whisper-service.py not found: ' + scriptPath);
+    return;
+  }
+
+  const pythonExec = fs.existsSync('C:\\Python312\\python.exe')
+    ? 'C:\\Python312\\python.exe'
+    : 'python';
+
+  logEvent('info', 'Initializing local Whisper STT daemon...');
+  whisperProcess = spawn(pythonExec, ['-u', scriptPath], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  whisperProcess.stdout.on('data', (data) => {
+    const raw = data.toString().trim();
+    if (!raw) return;
+
+    const lines = raw.split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.type === 'ready') {
+          isWhisperReady = true;
+          logEvent('info', `Whisper engine ready (model: ${parsed.model}, device: ${parsed.device}, compute: ${parsed.compute_type})`);
+        } else if (parsed.type === 'stt_recording_started') {
+          voiceState = 'RECORDING_COMMAND';
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('desktop-voice-state', { state: 'LISTENING' });
+          }
+        } else if (parsed.type === 'no_speech') {
+          resetVoiceSession('no speech detected');
+        } else if (parsed.type === 'stt_transcribing') {
+          voiceState = 'TRANSCRIBING';
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('desktop-voice-state', { state: 'THINKING' });
+          }
+        } else if (parsed.type === 'transcript') {
+          logEvent('info', `Whisper transcript: "${parsed.text}"`);
+          if (!parsed.text || !parsed.text.trim()) {
+            resetVoiceSession('empty transcript');
+          } else {
+            voiceState = 'COMMAND_RECEIVED';
+            if (sessionWatchdogTimer) {
+              clearTimeout(sessionWatchdogTimer);
+              sessionWatchdogTimer = null;
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('desktop-voice-transcript', {
+                text: parsed.text,
+                confidence: parsed.confidence || 0.98,
+                isFinal: true,
+                isWake: false,
+                latency: parsed.latency,
+              });
+            }
+          }
+        } else if (parsed.type === 'error') {
+          logEvent('warn', 'Whisper engine error: ' + parsed.message);
+          resetVoiceSession('whisper engine error');
+        }
+      } catch (_) {}
+    }
+  });
+
+  whisperProcess.stderr.on('data', (data) => {
+    const msg = data.toString().trim();
+    if (msg) console.log('[WHISPER STDERR]', msg);
+  });
+
+  whisperProcess.on('close', (code) => {
+    logEvent('info', `Whisper process exited with code ${code}`);
+    whisperProcess = null;
+    isWhisperReady = false;
+    resetVoiceSession('whisper process exited');
+    if (!app.isQuitting) {
+      setTimeout(startWhisperSTT, 5000);
+    }
+  });
+}
+
+function startKokoroTTS() {
+  const scriptPath = path.join(__dirname, 'kokoro-service.py');
+  if (!fs.existsSync(scriptPath)) {
+    logEvent('warn', 'kokoro-service.py not found: ' + scriptPath);
+    return;
+  }
+
+  const pythonExec = fs.existsSync('C:\\Python312\\python.exe')
+    ? 'C:\\Python312\\python.exe'
+    : 'python';
+
+  logEvent('info', 'Initializing local Kokoro TTS daemon on port 5050...');
+  kokoroProcess = spawn(pythonExec, ['-u', scriptPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: path.resolve(__dirname, '..', '..'),
+  });
+
+  kokoroProcess.stdout.on('data', (data) => {
+    const raw = data.toString().trim();
+    if (raw) {
+      if (raw.includes('Kokoro TTS Daemon running')) {
+        isKokoroReady = true;
+        logEvent('info', 'Kokoro TTS daemon active on http://127.0.0.1:5050');
+      }
+    }
+  });
+
+  kokoroProcess.stderr.on('data', (data) => {
+    const msg = data.toString().trim();
+    if (msg) console.log('[KOKORO STDERR]', msg);
+  });
+
+  kokoroProcess.on('close', (code) => {
+    logEvent('info', `Kokoro process exited with code ${code}`);
+    kokoroProcess = null;
+    isKokoroReady = false;
+    if (!app.isQuitting) {
+      setTimeout(startKokoroTTS, 5000);
+    }
+  });
+}
+
 // 7. WINDOW LIFECYCLE & SYSTEM TRAY
 function configureAutoStart(enable = true) {
   try {
@@ -804,7 +1046,11 @@ ipcMain.handle('open-log-folder', () => {
   shell.showItemInFolder(LOG_FILE);
 });
 
+// Window & Voice IPC Handlers
 ipcMain.handle('window-minimize', () => {
+  if (mainWindow) mainWindow.minimize();
+});
+ipcMain.handle('minimize-window', () => {
   if (mainWindow) mainWindow.minimize();
 });
 
@@ -813,9 +1059,62 @@ ipcMain.handle('window-maximize', () => {
     mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
   }
 });
+ipcMain.handle('maximize-window', () => {
+  if (mainWindow) {
+    mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+  }
+});
 
 ipcMain.handle('window-close', () => {
   if (mainWindow) mainWindow.close(); // Triggers close-to-tray
+});
+ipcMain.handle('close-window', () => {
+  if (mainWindow) mainWindow.close();
+});
+
+// Voice session state & overlay controls
+ipcMain.handle('set-voice-session-state', (_event, state) => {
+  voiceState = state;
+  logEvent('debug', `Presence voice state updated: ${state}`);
+  if (state === 'THINKING' || state === 'EXECUTING' || state === 'SPEAKING') {
+    if (sessionWatchdogTimer) {
+      clearTimeout(sessionWatchdogTimer);
+      sessionWatchdogTimer = null;
+    }
+  } else if (state === 'DORMANT') {
+    resetVoiceSession('renderer entered dormant');
+  }
+});
+
+ipcMain.handle('get-wake-word-status', () => {
+  return {
+    enabled: true,
+    keyword: 'AIVA',
+    provider: 'local-first',
+    speechActive: Boolean(speechProcess),
+    whisperActive: Boolean(whisperProcess && isWhisperReady),
+    kokoroActive: Boolean(kokoroProcess && isKokoroReady),
+  };
+});
+
+ipcMain.handle('set-ignore-mouse-events', (_event, ignore, options) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setIgnoreMouseEvents(Boolean(ignore), options || { forward: true });
+  }
+});
+
+ipcMain.handle('set-desktop-overlay-mode', (_event, mode) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mode === 'IDLE_OVERLAY') {
+      mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    } else {
+      mainWindow.setIgnoreMouseEvents(false);
+    }
+  }
+});
+
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
 });
 
 // App Lifecycle
@@ -849,12 +1148,24 @@ app.whenReady().then(async () => {
   if (authTokens?.accessToken) {
     await registerDeviceAndFabric();
   }
+
+  // 7. Start local voice & wake-word daemons
+  try {
+    startSpeechRecognition();
+    startWhisperSTT();
+    startKokoroTTS();
+  } catch (voiceErr) {
+    logEvent('warn', 'Voice daemons initialization notice: ' + voiceErr.message);
+  }
 });
 
 app.on('before-quit', () => {
   app.isQuitting = true;
   if (heartbeatIntervalTimer) clearInterval(heartbeatIntervalTimer);
   if (workerIntervalTimer) clearInterval(workerIntervalTimer);
+  if (speechProcess) { try { speechProcess.kill(); } catch (_) {} }
+  if (whisperProcess) { try { whisperProcess.kill(); } catch (_) {} }
+  if (kokoroProcess) { try { kokoroProcess.kill(); } catch (_) {} }
   logEvent('info', 'AIVA Desktop gracefully shutting down');
 });
 

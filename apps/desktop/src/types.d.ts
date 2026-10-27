@@ -54,6 +54,10 @@ export interface IElectronAPI {
   getDiagnosticsLogs: () => Promise<string[]>;
   openLogFolder: () => Promise<void>;
   onLogEntry: (callback: (entry: any) => void) => () => void;
+  onVoiceTranscript?: (callback: (data: { text: string; confidence?: number; isFinal?: boolean; isWake?: boolean }) => void) => () => void;
+  onVoiceState?: (callback: (data: { state: string }) => void) => () => void;
+  notifyVoiceLifecycle?: (state: string) => Promise<void>;
+  getWakeWordStatus?: () => Promise<{ enabled: boolean; keyword: string; provider: string }>;
   minimizeWindow: () => Promise<void>;
   maximizeWindow: () => Promise<void>;
   closeWindow: () => Promise<void>;

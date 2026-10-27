@@ -65,3 +65,4 @@ apps/mobile/android/build/
 apps/mobile/android/app/build/
 apps/mobile/android/.gradle/
 apps/mobile/wakeword_backup/
+release/

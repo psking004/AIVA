@@ -656,6 +656,7 @@ export interface AIVAConversationResponse {
   context: ConversationContext;
   model?: string;
   provider?: string;
+  target?: string;
 }
 
 export interface ToolCall {

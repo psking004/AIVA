@@ -37,6 +37,9 @@
     "files": [
       "main.js",
       "preload.js",
+      "speech-listener.ps1",
+      "kokoro-service.py",
+      "whisper-service.py",
       "assets/**/*",
       "renderer/**/*"
     ],

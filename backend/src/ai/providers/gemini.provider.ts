@@ -215,7 +215,7 @@ export class GeminiProvider implements AIProvider {
       );
     }
 
-    const model = this.defaultModel;
+    const model = options?.model || this.defaultModel;
     const timeout = options?.timeoutMs || this.timeoutMs;
     const url = `${this.baseUrl}/models/${model}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
 
