@@ -15,7 +15,7 @@
  * 10. Voice Wake-Word & STT Bridge (optional local modules)
  */
 
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -595,9 +595,34 @@ function getFabricStatusPayload() {
   };
 }
 
+// Helper to locate unpacked script files in both dev and packaged .asar
+function getScriptPath(filename) {
+  // 1. Unpacked ASAR path (packaged production)
+  const unpackedPath = path.join(__dirname.replace(/app\.asar$/, 'app.asar.unpacked'), filename);
+  if (fs.existsSync(unpackedPath)) return unpackedPath;
+
+  // 2. Resources app.asar.unpacked
+  if (process.resourcesPath) {
+    const resUnpacked = path.join(process.resourcesPath, 'app.asar.unpacked', filename);
+    if (fs.existsSync(resUnpacked)) return resUnpacked;
+    const directRes = path.join(process.resourcesPath, filename);
+    if (fs.existsSync(directRes)) return directRes;
+  }
+
+  // 3. Current dirname (dev mode)
+  const dirPath = path.join(__dirname, filename);
+  if (fs.existsSync(dirPath)) return dirPath;
+
+  // 4. Workspace desktop root
+  const wsPath = path.join(WORKSPACE_ROOT, 'apps', 'desktop', filename);
+  if (fs.existsSync(wsPath)) return wsPath;
+
+  return dirPath;
+}
+
 // 6b. VOICE SUBSYSTEMS (NATIVE WAKE-WORD, WHISPER STT, KOKORO TTS)
 function startSpeechRecognition() {
-  const scriptPath = path.join(__dirname, 'speech-listener.ps1');
+  const scriptPath = getScriptPath('speech-listener.ps1');
   if (!fs.existsSync(scriptPath)) {
     logEvent('warn', 'Speech listener script not found: ' + scriptPath);
     return;
@@ -687,7 +712,7 @@ function startSpeechRecognition() {
 }
 
 function startWhisperSTT() {
-  const scriptPath = path.join(__dirname, 'whisper-service.py');
+  const scriptPath = getScriptPath('whisper-service.py');
   if (!fs.existsSync(scriptPath)) {
     logEvent('warn', 'whisper-service.py not found: ' + scriptPath);
     return;
@@ -771,7 +796,7 @@ function startWhisperSTT() {
 }
 
 function startKokoroTTS() {
-  const scriptPath = path.join(__dirname, 'kokoro-service.py');
+  const scriptPath = getScriptPath('kokoro-service.py');
   if (!fs.existsSync(scriptPath)) {
     logEvent('warn', 'kokoro-service.py not found: ' + scriptPath);
     return;
@@ -828,15 +853,24 @@ function configureAutoStart(enable = true) {
 }
 
 function createWindow() {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width, height, x, y } = primaryDisplay.workArea;
+
   mainWindow = new BrowserWindow({
-    width: 1180,
-    height: 780,
-    minWidth: 980,
-    minHeight: 650,
+    x,
+    y,
+    width,
+    height,
     frame: false,
-    transparent: false,
-    backgroundColor: '#0a0d14',
-    title: 'AIVA - Distributed AI System',
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    resizable: false,
+    movable: false,
+    focusable: true,
+    title: 'AIVA - Holographic Assistant',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -844,6 +878,9 @@ function createWindow() {
     },
     show: !process.argv.includes('--hidden'),
   });
+
+  // Default to click-through overlay so desktop interaction passes through
+  mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
   mainWindow.webContents.on('console-message', (_event, level, message) => {
     console.log(`[RENDERER] ${message}`);
@@ -907,7 +944,26 @@ function createTray() {
 
     const contextMenu = Menu.buildFromTemplate([
       {
-        label: `AIVA Distributed Node: ${statusText}`,
+        label: '✦ Wake AIVA (Hologram)',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.webContents.send('desktop-voice-state', { state: 'LISTENING' });
+            mainWindow.webContents.send('desktop-voice-transcript', { isWake: true });
+          }
+        },
+      },
+      {
+        label: 'Dismiss AIVA',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.webContents.send('desktop-voice-state', { state: 'DORMANT' });
+          }
+        },
+      },
+      { type: 'separator' },
+      {
+        label: `AIVA Fabric Node: ${statusText}`,
         enabled: false,
       },
       {
@@ -916,11 +972,11 @@ function createTray() {
       },
       { type: 'separator' },
       {
-        label: 'Open AIVA Workspace',
+        label: 'Toggle Diagnostics & Logs',
         click: () => {
           if (mainWindow) {
             mainWindow.show();
-            mainWindow.focus();
+            mainWindow.webContents.send('toggle-diagnostics');
           }
         },
       },
@@ -964,11 +1020,19 @@ function createTray() {
   };
 
   updateContextMenu();
-  tray.setToolTip(`AIVA Distributed AI System - ${deviceIdentity?.node_id || 'Compute Node'}`);
+  tray.on('click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.webContents.send('desktop-voice-state', { state: 'LISTENING' });
+      mainWindow.webContents.send('desktop-voice-transcript', { isWake: true });
+    }
+  });
 
   tray.on('double-click', () => {
     if (mainWindow) {
-      mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
+      mainWindow.show();
+      mainWindow.webContents.send('desktop-voice-state', { state: 'LISTENING' });
+      mainWindow.webContents.send('desktop-voice-transcript', { isWake: true });
     }
   });
 }

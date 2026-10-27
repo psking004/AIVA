@@ -1,53 +1,177 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { FabricState } from './types';
+import faceBase from '../assets/aiva_face_base.png';
+import eyelidsImg from '../assets/aiva_eyelids.png';
+import mouthSlight from '../assets/aiva_face_mouth_slight.png';
+import mouthMid from '../assets/aiva_face_mouth_mid.png';
+import mouthWide from '../assets/aiva_face_mouth_wide.png';
+import mouthO from '../assets/aiva_face_mouth_o.png';
 
-interface ChatMessage {
-  id: string;
-  sender: 'user' | 'aiva';
+export type AIVAVisualState =
+  | 'DORMANT'
+  | 'MATERIALIZING'
+  | 'LISTENING'
+  | 'THINKING'
+  | 'SPEAKING'
+  | 'EXECUTING'
+  | 'DISMISSING';
+
+export type AivaVisemeKey = 'base' | 'slight' | 'mid' | 'wide' | 'o';
+
+interface ChatResponseMeta {
   content: string;
-  timestamp: string;
-  model?: string;
   target?: string;
+  model?: string;
   latencyMs?: number;
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'assistant' | 'chat' | 'fabric' | 'worker' | 'logs' | 'settings'>('assistant');
-  const [fabricState, setFabricState] = useState<FabricState | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'welcome',
-      sender: 'aiva',
-      content: 'AIVA Personal AI OS active. Distributed fabric connected. Voice wake-word "AIVA" listening.',
-      timestamp: new Date().toLocaleTimeString(),
-      target: 'Local',
-      model: 'Distributed Core',
-    },
-  ]);
+  const [visualState, setVisualState] = useState<AIVAVisualState>('DORMANT');
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [voiceState, setVoiceState] = useState<'DORMANT' | 'LISTENING' | 'THINKING' | 'SPEAKING'>('DORMANT');
-  const [assistantHint, setAssistantHint] = useState<string>('Say "AIVA" or tap microphone');
-  const [audioEnabled, setAudioEnabled] = useState<boolean>(true);
-  const [isListeningManual, setIsListeningManual] = useState<boolean>(false);
-  const [activeLens, setActiveLens] = useState<'tasks' | 'projects' | 'memory' | null>(null);
+  const [audioLevel, setAudioLevel] = useState<number>(0);
+  const [activeViseme, setActiveViseme] = useState<AivaVisemeKey>('base');
+  const [isBlinking, setIsBlinking] = useState(false);
+  const [latestResponse, setLatestResponse] = useState<ChatResponseMeta | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
-  // Auth form
-  const [authEmail, setAuthEmail] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
+  // Background fabric & telemetry state
+  const [fabricState, setFabricState] = useState<FabricState | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [audioEnabled, setAudioEnabled] = useState(true);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  // Timers and refs
+  const dormancyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioAnimationRef = useRef<number | null>(null);
+  const activeAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isInputFocusedRef = useRef(false);
 
-  // Play audio response via Kokoro local TTS daemon (port 5050) with Web Speech API fallback
+  // Mouse ignore control
+  const handleMouseEnterInteractive = () => {
+    window.electronAPI?.setIgnoreMouseEvents?.(false);
+  };
+
+  const handleMouseLeaveInteractive = () => {
+    if (visualState === 'DORMANT' && !showDiagnostics && !isInputFocusedRef.current) {
+      window.electronAPI?.setIgnoreMouseEvents?.(true, { forward: true });
+    }
+  };
+
+  // Schedule automatic return to DORMANT after idle
+  const resetDormancyTimer = (delayMs = 12000) => {
+    if (dormancyTimerRef.current) {
+      clearTimeout(dormancyTimerRef.current);
+    }
+    dormancyTimerRef.current = setTimeout(() => {
+      if (!isInputFocusedRef.current && visualState !== 'THINKING' && visualState !== 'SPEAKING') {
+        dismissAiva();
+      }
+    }, delayMs);
+  };
+
+  // Wake AIVA into interactive presence
+  const wakeAiva = (initialQuery = '') => {
+    if (dormancyTimerRef.current) {
+      clearTimeout(dormancyTimerRef.current);
+      dormancyTimerRef.current = null;
+    }
+    // Cancel any ongoing audio if barging in
+    if (activeAudioElRef.current) {
+      activeAudioElRef.current.pause();
+      activeAudioElRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    window.electronAPI?.setIgnoreMouseEvents?.(false);
+    setVisualState('MATERIALIZING');
+
+    setTimeout(() => {
+      setVisualState('LISTENING');
+      window.electronAPI?.notifyVoiceLifecycle?.('LISTENING');
+      setTimeout(() => inputRef.current?.focus(), 100);
+      resetDormancyTimer(14000);
+    }, 280);
+
+    if (initialQuery.trim()) {
+      executeCommand(initialQuery.trim());
+    }
+  };
+
+  // Dismiss AIVA back to DORMANT transparent desktop
+  const dismissAiva = () => {
+    if (dormancyTimerRef.current) {
+      clearTimeout(dormancyTimerRef.current);
+      dormancyTimerRef.current = null;
+    }
+    if (activeAudioElRef.current) {
+      activeAudioElRef.current.pause();
+      activeAudioElRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    setVisualState('DISMISSING');
+    window.electronAPI?.notifyVoiceLifecycle?.('DORMANT');
+
+    setTimeout(() => {
+      setVisualState('DORMANT');
+      setLatestResponse(null);
+      if (!showDiagnostics) {
+        window.electronAPI?.setIgnoreMouseEvents?.(true, { forward: true });
+      }
+    }, 380);
+  };
+
+  // Natural eyelid blinking cycle (every 3.6s to 6.2s) when not dormant
+  useEffect(() => {
+    if (visualState === 'DORMANT') {
+      setIsBlinking(false);
+      return;
+    }
+
+    let isMounted = true;
+    let blinkTimer: ReturnType<typeof setTimeout> | null = null;
+    let closeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNextBlink = () => {
+      if (!isMounted) return;
+      const delay = 3500 + Math.random() * 2700;
+      blinkTimer = setTimeout(() => {
+        if (!isMounted) return;
+        setIsBlinking(true);
+        closeTimer = setTimeout(() => {
+          if (!isMounted) return;
+          setIsBlinking(false);
+          scheduleNextBlink();
+        }, 130);
+      }, delay);
+    };
+
+    scheduleNextBlink();
+
+    return () => {
+      isMounted = false;
+      if (blinkTimer) clearTimeout(blinkTimer);
+      if (closeTimer) clearTimeout(closeTimer);
+    };
+  }, [visualState]);
+
+  // Audio Playback with real-time lip-sync driving
   const playAudioTTS = async (text: string) => {
-    if (!text || !audioEnabled) return;
-    setVoiceState('SPEAKING');
+    if (!text || !audioEnabled) {
+      setVisualState('LISTENING');
+      resetDormancyTimer(8000);
+      return;
+    }
 
-    // 1. Try local Kokoro TTS engine on port 5050
+    setVisualState('SPEAKING');
+    window.electronAPI?.notifyVoiceLifecycle?.('SPEAKING');
+
+    // 1. Attempt Kokoro local TTS daemon on port 5050
     try {
       const kokoroRes = await fetch('http://127.0.0.1:5050/synthesize', {
         method: 'POST',
@@ -60,19 +184,55 @@ export default function App() {
         const blob = await kokoroRes.blob();
         const audioUrl = URL.createObjectURL(blob);
         const audio = new Audio(audioUrl);
+        activeAudioElRef.current = audio;
+
+        // Drive visemes from audio playback
+        let phase = 0;
+        const tickLipSync = () => {
+          if (!audio.paused && !audio.ended) {
+            phase += 0.22;
+            const simulatedLevel = 0.2 + Math.abs(Math.sin(phase)) * 0.65;
+            setAudioLevel(simulatedLevel);
+
+            if (simulatedLevel < 0.25) setActiveViseme('slight');
+            else if (simulatedLevel < 0.52) setActiveViseme('mid');
+            else if (simulatedLevel < 0.78) setActiveViseme('wide');
+            else setActiveViseme('o');
+
+            audioAnimationRef.current = requestAnimationFrame(tickLipSync);
+          } else {
+            setAudioLevel(0);
+            setActiveViseme('base');
+          }
+        };
+
+        audio.onplay = () => {
+          audioAnimationRef.current = requestAnimationFrame(tickLipSync);
+        };
+
         audio.onended = () => {
-          setVoiceState('DORMANT');
           URL.revokeObjectURL(audioUrl);
+          activeAudioElRef.current = null;
+          setAudioLevel(0);
+          setActiveViseme('base');
+          setVisualState('LISTENING');
+          resetDormancyTimer(10000);
         };
+
         audio.onerror = () => {
-          setVoiceState('DORMANT');
           URL.revokeObjectURL(audioUrl);
+          activeAudioElRef.current = null;
+          setAudioLevel(0);
+          setActiveViseme('base');
+          setVisualState('LISTENING');
+          resetDormancyTimer(8000);
         };
+
         await audio.play();
         return;
       }
     } catch (_) {
-      // Kokoro offline or timed out -> smooth fallback to Web Speech
+      // Fallback to Web Speech API
     }
 
     // 2. Web Speech API fallback
@@ -80,775 +240,576 @@ export default function App() {
       try {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.05;
+        utterance.rate = 1.02;
         utterance.pitch = 1.0;
-        utterance.onend = () => setVoiceState('DORMANT');
-        utterance.onerror = () => setVoiceState('DORMANT');
+
+        let phase = 0;
+        const intervalId = setInterval(() => {
+          phase += 0.28;
+          const level = 0.2 + Math.abs(Math.sin(phase)) * 0.6;
+          setAudioLevel(level);
+          if (level < 0.25) setActiveViseme('slight');
+          else if (level < 0.55) setActiveViseme('mid');
+          else setActiveViseme('wide');
+        }, 120);
+
+        utterance.onend = () => {
+          clearInterval(intervalId);
+          setAudioLevel(0);
+          setActiveViseme('base');
+          setVisualState('LISTENING');
+          resetDormancyTimer(10000);
+        };
+
+        utterance.onerror = () => {
+          clearInterval(intervalId);
+          setAudioLevel(0);
+          setActiveViseme('base');
+          setVisualState('LISTENING');
+          resetDormancyTimer(8000);
+        };
+
         window.speechSynthesis.speak(utterance);
       } catch (_) {
-        setVoiceState('DORMANT');
+        setVisualState('LISTENING');
+        resetDormancyTimer(8000);
       }
     } else {
-      setVoiceState('DORMANT');
+      setVisualState('LISTENING');
+      resetDormancyTimer(8000);
     }
   };
 
-  // Poll & listen to fabric state and voice events
-  useEffect(() => {
-    if (window.electronAPI) {
-      window.electronAPI.getFabricState().then((state) => {
-        setFabricState(state);
-      });
-
-      const unsubState = window.electronAPI.onFabricUpdate((state) => {
-        setFabricState(state);
-      });
-
-      window.electronAPI.getDiagnosticsLogs().then((l) => setLogs(l));
-
-      const unsubLogs = window.electronAPI.onLogEntry((entry) => {
-        const line = `[${entry.timestamp}] [${entry.level?.toUpperCase()}] ${entry.message}`;
-        setLogs((prev) => [...prev.slice(-150), line]);
-      });
-
-      // Voice transcript listener
-      let unsubTranscript: (() => void) | undefined;
-      if (window.electronAPI.onVoiceTranscript) {
-        unsubTranscript = window.electronAPI.onVoiceTranscript((data) => {
-          if (data.isWake) {
-            setVoiceState('LISTENING');
-            setAssistantHint('Listening for directive...');
-          } else if (data.text && data.text.trim()) {
-            setVoiceState('THINKING');
-            setAssistantHint(`"${data.text}"`);
-            executeCommand(data.text.trim());
-          }
-        });
-      }
-
-      // Voice state listener
-      let unsubVoiceState: (() => void) | undefined;
-      if (window.electronAPI.onVoiceState) {
-        unsubVoiceState = window.electronAPI.onVoiceState((data) => {
-          if (data.state) {
-            setVoiceState(data.state as any);
-          }
-        });
-      }
-
-      return () => {
-        unsubState?.();
-        unsubLogs?.();
-        unsubTranscript?.();
-        unsubVoiceState?.();
-      };
-    }
-  }, []);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
-
-  // Execute directive
+  // Execute directive via distributed fabric
   const executeCommand = async (command: string) => {
     if (!command.trim() || isSending) return;
 
-    const userMsg: ChatMessage = {
-      id: `usr_${Date.now()}`,
-      sender: 'user',
-      content: command.trim(),
-      timestamp: new Date().toLocaleTimeString(),
-    };
-
-    setMessages((prev) => [...prev, userMsg]);
     setIsSending(true);
-    setVoiceState('THINKING');
-    setAssistantHint('Reasoning through distributed fabric...');
+    setVisualState('THINKING');
+    window.electronAPI?.notifyVoiceLifecycle?.('THINKING');
+
+    const startTime = Date.now();
 
     try {
       if (window.electronAPI) {
-        const start = Date.now();
         const res = await window.electronAPI.sendChatMessage(command.trim());
-        const elapsed = Date.now() - start;
+        const latencyMs = Date.now() - startTime;
 
         if (res.success && res.data) {
           const data = res.data;
           const replyText = data.response || data.message || 'Directive executed.';
-          const aivaMsg: ChatMessage = {
-            id: `aiva_${Date.now()}`,
-            sender: 'aiva',
+          const meta: ChatResponseMeta = {
             content: replyText,
-            timestamp: new Date().toLocaleTimeString(),
-            model: data.model || data.routing?.model || 'AIVA',
-            target: data.target || data.routing?.target || (fabricState?.hardwareInfo?.nodeRole === 'AI_POWER_NODE' ? 'PC-A (CUDA)' : 'PC-B (CPU)'),
-            latencyMs: data.latencyMs || elapsed,
+            target: data.target || data.node || 'Distributed Fabric',
+            model: data.model || 'AIVA Core',
+            latencyMs: data.latencyMs || latencyMs,
           };
-          setMessages((prev) => [...prev, aivaMsg]);
-          setAssistantHint(`Answered via ${aivaMsg.target} (${aivaMsg.latencyMs}ms)`);
+
+          setLatestResponse(meta);
           playAudioTTS(replyText);
         } else {
-          const errorMsg = res.error || 'Network communication error';
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: `err_${Date.now()}`,
-              sender: 'aiva',
-              content: `Execution error: ${errorMsg}`,
-              timestamp: new Date().toLocaleTimeString(),
-              target: 'Error',
-            },
-          ]);
-          setVoiceState('DORMANT');
-          setAssistantHint('Execution error. Please try again.');
+          const errText = res.error || 'Failed to process directive.';
+          setLatestResponse({
+            content: errText,
+            target: 'Error',
+            model: 'Fabric Node',
+            latencyMs: Date.now() - startTime,
+          });
+          setVisualState('LISTENING');
+          resetDormancyTimer(8000);
         }
       }
     } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err_${Date.now()}`,
-          sender: 'aiva',
-          content: `Failed to dispatch: ${err.message}`,
-          timestamp: new Date().toLocaleTimeString(),
-          target: 'Error',
-        },
-      ]);
-      setVoiceState('DORMANT');
-      setAssistantHint('Directive failed.');
+      setLatestResponse({
+        content: err.message || 'Network communication fault.',
+        target: 'Fault',
+        model: 'Client',
+        latencyMs: Date.now() - startTime,
+      });
+      setVisualState('LISTENING');
+      resetDormancyTimer(8000);
     } finally {
       setIsSending(false);
+      setInputText('');
     }
   };
 
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!inputText.trim() || isSending) return;
-    const msg = inputText.trim();
-    setInputText('');
-    await executeCommand(msg);
-  };
-
-  const toggleManualMic = () => {
-    if (isListeningManual) {
-      setIsListeningManual(false);
-      setVoiceState('DORMANT');
-      setAssistantHint('Say "AIVA" or tap microphone');
-    } else {
-      setIsListeningManual(true);
-      setVoiceState('LISTENING');
-      setAssistantHint('Listening... Speak now');
-    }
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!authEmail || !authPassword) {
-      setAuthError('Email and password required');
-      return;
-    }
-    setAuthLoading(true);
-    setAuthError('');
-    try {
-      if (window.electronAPI) {
-        const res = await window.electronAPI.loginUser(authEmail, authPassword);
-        if (res.success) {
-          setAuthPassword('');
-          const updated = await window.electronAPI.getFabricState();
-          setFabricState(updated);
-        } else {
-          setAuthError(res.error || 'Authentication failed');
+  // Keyboard shortcut listener (Escape to dismiss, Ctrl+Shift+D for diagnostics)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showDiagnostics) {
+          setShowDiagnostics(false);
+        } else if (visualState !== 'DORMANT') {
+          dismissAiva();
         }
+      } else if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault();
+        setShowDiagnostics((prev) => !prev);
       }
-    } catch (err: any) {
-      setAuthError(err.message || 'Login failed');
-    } finally {
-      setAuthLoading(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [visualState, showDiagnostics]);
+
+  // IPC Event Wire-up
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    window.electronAPI.getFabricState().then((state) => setFabricState(state));
+    const unsubFabric = window.electronAPI.onFabricUpdate((state) => setFabricState(state));
+
+    window.electronAPI.getDiagnosticsLogs().then((l) => setLogs(l));
+    const unsubLogs = window.electronAPI.onLogEntry((entry) => {
+      const line = `[${entry.timestamp}] [${entry.level?.toUpperCase()}] ${entry.message}`;
+      setLogs((prev) => [...prev.slice(-120), line]);
+    });
+
+    // Voice transcript listener from native wake-word & whisper daemon
+    let unsubTranscript: (() => void) | undefined;
+    if (window.electronAPI.onVoiceTranscript) {
+      unsubTranscript = window.electronAPI.onVoiceTranscript((data) => {
+        if (data.isWake) {
+          wakeAiva();
+        } else if (data.text && data.text.trim()) {
+          wakeAiva(data.text.trim());
+        }
+      });
     }
-  };
 
-  const isOnline = fabricState?.isOnline;
-  const nodeRole = fabricState?.hardwareInfo?.nodeRole || 'COMPUTE_NODE';
-  const nodeId = fabricState?.deviceIdentity?.node_id || 'PC';
-  const gpu = fabricState?.hardwareInfo?.gpu;
-  const cpu = fabricState?.hardwareInfo?.cpu;
-  const memory = fabricState?.hardwareInfo?.memory;
+    // Voice state listener from main process
+    let unsubVoiceState: (() => void) | undefined;
+    if (window.electronAPI.onVoiceState) {
+      unsubVoiceState = window.electronAPI.onVoiceState((data) => {
+        if (data.state === 'LISTENING') wakeAiva();
+        else if (data.state === 'DORMANT') dismissAiva();
+      });
+    }
 
-  const latestAivaMsg = [...messages].reverse().find((m) => m.sender === 'aiva');
+    return () => {
+      unsubFabric?.();
+      unsubLogs?.();
+      unsubTranscript?.();
+      unsubVoiceState?.();
+    };
+  }, []);
+
+  // Compute presence aura colors based on visual state
+  const auraGlowStyle = useMemo(() => {
+    switch (visualState) {
+      case 'LISTENING':
+        return {
+          background:
+            'radial-gradient(circle at 50% 50%, rgba(45, 183, 242, 0.48) 0%, rgba(99, 102, 241, 0.28) 45%, rgba(236, 72, 153, 0.12) 68%, transparent 80%)',
+          filter: 'blur(36px)',
+          transform: 'scale(1.08)',
+        };
+      case 'THINKING':
+        return {
+          background:
+            'radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.55) 0%, rgba(56, 189, 248, 0.35) 45%, rgba(217, 70, 239, 0.18) 70%, transparent 82%)',
+          filter: 'blur(42px)',
+          transform: 'scale(1.14)',
+        };
+      case 'SPEAKING':
+        return {
+          background:
+            'radial-gradient(circle at 50% 50%, rgba(244, 114, 182, 0.45) 0%, rgba(56, 189, 248, 0.32) 48%, rgba(139, 92, 246, 0.18) 68%, transparent 82%)',
+          filter: 'blur(38px)',
+          transform: `scale(${1.05 + audioLevel * 0.12})`,
+        };
+      case 'EXECUTING':
+        return {
+          background:
+            'radial-gradient(circle at 50% 50%, rgba(52, 211, 153, 0.5) 0%, rgba(45, 183, 242, 0.3) 48%, transparent 75%)',
+          filter: 'blur(36px)',
+          transform: 'scale(1.1)',
+        };
+      default:
+        return {
+          background:
+            'radial-gradient(circle at 50% 50%, rgba(45, 183, 242, 0.2) 0%, rgba(139, 92, 246, 0.1) 50%, transparent 70%)',
+          filter: 'blur(30px)',
+          transform: 'scale(1)',
+        };
+    }
+  }, [visualState, audioLevel]);
+
+  const statusLabel = useMemo(() => {
+    switch (visualState) {
+      case 'LISTENING':
+        return 'LISTENING';
+      case 'THINKING':
+        return 'THINKING';
+      case 'SPEAKING':
+        return 'SPEAKING';
+      case 'EXECUTING':
+        return 'EXECUTING';
+      default:
+        return 'AIVA';
+    }
+  }, [visualState]);
+
+  const statusColor = useMemo(() => {
+    switch (visualState) {
+      case 'LISTENING':
+        return 'bg-cyan-500 text-cyan-200 border-cyan-400/50 shadow-cyan-500/50';
+      case 'THINKING':
+        return 'bg-violet-500 text-violet-200 border-violet-400/50 shadow-violet-500/50';
+      case 'SPEAKING':
+        return 'bg-pink-500 text-pink-200 border-pink-400/50 shadow-pink-500/50';
+      case 'EXECUTING':
+        return 'bg-emerald-500 text-emerald-200 border-emerald-400/50 shadow-emerald-500/50';
+      default:
+        return 'bg-cyan-500/80 text-cyan-200 border-cyan-400/30';
+    }
+  }, [visualState]);
+
+  const isDormant = visualState === 'DORMANT';
+  const isDismissing = visualState === 'DISMISSING';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#07090e', color: '#e2e8f0', fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', userSelect: 'none' }}>
-      {/* 1. Custom Frameless Titlebar */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '42px', background: '#05070a', borderBottom: '1px solid #172033', padding: '0 12px', WebkitAppRegion: 'drag' } as any}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{ width: '9px', height: '9px', borderRadius: '50%', background: isOnline ? '#10b981' : '#f59e0b', boxShadow: isOnline ? '0 0 10px #10b981' : '0 0 10px #f59e0b' }} />
-          <span style={{ fontWeight: 800, fontSize: '13px', letterSpacing: '1.5px', color: '#38bdf8' }}>AIVA</span>
-          <span style={{ fontSize: '11px', color: '#64748b' }}>· PERSONAL AI OS</span>
-          <span style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '4px', background: nodeRole === 'AI_POWER_NODE' ? '#1e1b4b' : '#1e293b', color: nodeRole === 'AI_POWER_NODE' ? '#a5b4fc' : '#94a3b8', border: '1px solid #334155' }}>
-            {nodeId} ({nodeRole})
-          </span>
-          <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
-            🎙️ Wake: "AIVA" Active
+    <div className="w-screen h-screen overflow-hidden select-none pointer-events-none relative flex flex-col items-center justify-center font-sans">
+      {/* 0. DORMANT PRESENCE ORB (Inconspicuous subtle floating spark to wake on tap) */}
+      {isDormant && (
+        <div
+          className="pointer-events-auto absolute top-6 flex flex-col items-center cursor-pointer transition-all duration-500 hover:scale-125 opacity-40 hover:opacity-100 group"
+          onClick={() => wakeAiva()}
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+          title="Click to summon AIVA"
+        >
+          <div className="w-3 h-3 rounded-full bg-cyan-400 shadow-[0_0_15px_#2DB7F2,0_0_30px_#818CF8] animate-pulse" />
+          <span className="text-[10px] tracking-widest text-cyan-300 uppercase mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-[0_0_8px_rgba(45,183,242,0.8)]">
+            AIVA • Say "AIVA" or Tap
           </span>
         </div>
+      )}
 
-        {/* Window Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', WebkitAppRegion: 'no-drag' } as any}>
-          <button
-            onClick={() => window.electronAPI?.minimizeWindow()}
-            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px 8px', fontSize: '13px', borderRadius: '4px' }}
-            title="Minimize"
-          >
-            _
-          </button>
-          <button
-            onClick={() => window.electronAPI?.maximizeWindow()}
-            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '4px 8px', fontSize: '12px', borderRadius: '4px' }}
-            title="Maximize"
-          >
-            [ ]
-          </button>
-          <button
-            onClick={() => window.electronAPI?.closeWindow()}
-            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', padding: '4px 8px', fontSize: '15px', borderRadius: '4px' }}
-            title="Minimize to Tray (Keeps background worker active)"
-          >
-            ×
-          </button>
-        </div>
+      {/* 1. DISCREET DIAGNOSTICS & SETTINGS TRIGGER (Top Right) */}
+      <div
+        className="pointer-events-auto absolute top-5 right-6 z-50 flex items-center gap-3 transition-opacity duration-300 opacity-20 hover:opacity-100"
+        onMouseEnter={handleMouseEnterInteractive}
+        onMouseLeave={handleMouseLeaveInteractive}
+      >
+        <button
+          onClick={() => setShowDiagnostics((prev) => !prev)}
+          className="px-2.5 py-1 rounded-full text-[11px] font-mono tracking-wider bg-slate-900/60 backdrop-blur-md border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all flex items-center gap-1.5 shadow-[0_0_12px_rgba(0,0,0,0.5)]"
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${fabricState?.isOnline ? 'bg-emerald-400 shadow-[0_0_8px_#34D399]' : 'bg-amber-400'}`} />
+          {fabricState?.deviceIdentity?.node_id || 'NODE'} • {fabricState?.deviceIdentity?.node_role || 'FABRIC'}
+        </button>
       </div>
 
-      {/* 2. Navigation Tabs */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#0a0d14', padding: '8px 14px', borderBottom: '1px solid #172033' }}>
-        {[
-          { id: 'assistant', label: '✨ AIVA Assistant' },
-          { id: 'chat', label: '💬 Chat Stream' },
-          { id: 'fabric', label: '⚡ Distributed Fabric' },
-          { id: 'worker', label: `⚙️ Worker Telemetry (${fabricState?.workerStats?.tasksCompleted || 0})` },
-          { id: 'logs', label: '📜 Diagnostics & Logs' },
-          { id: 'settings', label: '🔒 Settings & Identity' },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            style={{
-              padding: '6px 14px',
-              borderRadius: '6px',
-              border: activeTab === tab.id ? '1px solid #38bdf8' : '1px solid transparent',
-              background: activeTab === tab.id ? 'rgba(56, 189, 248, 0.12)' : 'transparent',
-              color: activeTab === tab.id ? '#38bdf8' : '#94a3b8',
-              fontSize: '12px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <button
-            onClick={() => setAudioEnabled(!audioEnabled)}
-            style={{
-              background: 'transparent',
-              border: '1px solid #334155',
-              borderRadius: '6px',
-              padding: '3px 8px',
-              color: audioEnabled ? '#38bdf8' : '#64748b',
-              fontSize: '11px',
-              cursor: 'pointer',
-            }}
-            title={audioEnabled ? 'Voice output enabled' : 'Voice output muted'}
-          >
-            {audioEnabled ? '🔊 Voice On' : '🔇 Muted'}
-          </button>
-          <span style={{ fontSize: '11px', color: isOnline ? '#10b981' : '#f59e0b' }}>
-            {isOnline ? 'Fabric Online' : 'Connecting to Fabric...'}
-          </span>
-        </div>
-      </div>
-
-      {/* 3. Main Stage Area */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* ======================================================== */}
-        {/* TAB 1: INTENDED USER-FACING AIVA ASSISTANT EXPERIENCE   */}
-        {/* ======================================================== */}
-        {activeTab === 'assistant' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '24px', gap: '20px', alignItems: 'center', justifyContent: 'space-between', boxSizing: 'border-box', overflowY: 'auto' }}>
-            {/* Top Assistant Status Badge */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(15, 23, 42, 0.7)', border: '1px solid #1e293b', padding: '6px 16px', borderRadius: '20px' }}>
-              <div
-                style={{
-                  width: '8px',
-                  height: '8px',
-                  borderRadius: '50%',
-                  background: voiceState === 'LISTENING' ? '#38bdf8' : voiceState === 'THINKING' ? '#c084fc' : voiceState === 'SPEAKING' ? '#10b981' : '#64748b',
-                  boxShadow: voiceState !== 'DORMANT' ? '0 0 12px currentColor' : 'none',
-                }}
-              />
-              <span style={{ fontSize: '12px', fontWeight: 600, color: '#f8fafc', letterSpacing: '0.5px' }}>
-                {voiceState === 'LISTENING' ? '✦ LISTENING TO VOICE...' : voiceState === 'THINKING' ? '✦ REASONING & ROUTING...' : voiceState === 'SPEAKING' ? '✦ SPEAKING...' : '✦ AIVA READY'}
-              </span>
-              <span style={{ fontSize: '11px', color: '#64748b' }}>|</span>
-              <span style={{ fontSize: '11px', color: '#94a3b8' }}>{assistantHint}</span>
-            </div>
-
-            {/* Central Holographic Neural Presence */}
+      {/* 2. MAIN HOLOGRAPHIC CONTAINER (Floating Transparent Digital Human) */}
+      {!isDormant && (
+        <div
+          className={`pointer-events-auto relative flex flex-col items-center justify-center transition-all duration-500 ${
+            visualState === 'MATERIALIZING'
+              ? 'animate-materialize'
+              : isDismissing
+              ? 'animate-dismiss'
+              : 'opacity-100 scale-100'
+          }`}
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+        >
+          {/* Hologram Stage Area */}
+          <div className="relative flex items-center justify-center w-[340px] h-[340px] sm:w-[380px] sm:h-[380px] lg:w-[420px] lg:h-[420px] animate-holo-float">
+            {/* A. Atmospheric Presence Aura Glow */}
             <div
-              onClick={toggleManualMic}
-              style={{
-                position: 'relative',
-                width: '180px',
-                height: '180px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                margin: '10px 0',
-              }}
-              title="Click to toggle voice listening"
-            >
-              {/* Outer Orbital Ring 1 */}
-              <div
-                style={{
-                  position: 'absolute',
-                  width: '180px',
-                  height: '180px',
-                  borderRadius: '50%',
-                  border: '1px dashed rgba(56, 189, 248, 0.35)',
-                  boxShadow: voiceState === 'LISTENING' ? '0 0 25px rgba(56, 189, 248, 0.4)' : 'none',
-                  animation: 'spin 12s linear infinite',
-                  transition: 'all 0.3s ease',
-                }}
-              />
+              className="absolute inset-0 rounded-full pointer-events-none transition-all duration-700 ease-out"
+              style={auraGlowStyle}
+            />
 
-              {/* Middle Orbital Ring 2 */}
+            {/* B. 3D Luminous Orbital Energy Rings (Matching Reference Image) */}
+            <div className="absolute inset-0 pointer-events-none perspective-1000 flex items-center justify-center">
+              {/* Ring 1 (Tilted ~25° Cyan-Violet) */}
               <div
+                className={`absolute w-[112%] h-[112%] rounded-full border border-cyan-400/40 shadow-[0_0_20px_rgba(45,183,242,0.4)] ${
+                  visualState === 'THINKING' ? 'animate-orbit-1-fast border-violet-400/70 shadow-[0_0_30px_#818CF8]' : 'animate-orbit-1'
+                }`}
                 style={{
-                  position: 'absolute',
-                  width: '140px',
-                  height: '140px',
-                  borderRadius: '50%',
-                  border: '1px solid rgba(192, 132, 252, 0.4)',
-                  boxShadow: voiceState === 'THINKING' ? '0 0 30px rgba(192, 132, 252, 0.5)' : 'none',
-                  transform: 'rotate(45deg)',
-                  transition: 'all 0.3s ease',
-                }}
-              />
-
-              {/* Inner Glowing Plasma Core */}
-              <div
-                style={{
-                  width: '90px',
-                  height: '90px',
-                  borderRadius: '50%',
-                  background: voiceState === 'LISTENING'
-                    ? 'radial-gradient(circle, #38bdf8 0%, #1e40af 100%)'
-                    : voiceState === 'THINKING'
-                    ? 'radial-gradient(circle, #c084fc 0%, #4c1d95 100%)'
-                    : voiceState === 'SPEAKING'
-                    ? 'radial-gradient(circle, #34d399 0%, #065f46 100%)'
-                    : 'radial-gradient(circle, #0284c7 0%, #0f172a 100%)',
-                  boxShadow: voiceState === 'LISTENING'
-                    ? '0 0 40px #38bdf8'
-                    : voiceState === 'THINKING'
-                    ? '0 0 50px #c084fc'
-                    : voiceState === 'SPEAKING'
-                    ? '0 0 45px #34d399'
-                    : '0 0 25px rgba(2, 132, 199, 0.5)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'all 0.35s ease',
-                  transform: voiceState !== 'DORMANT' ? 'scale(1.08)' : 'scale(1.0)',
+                  background: 'linear-gradient(135deg, rgba(45,183,242,0.25) 0%, rgba(139,92,246,0.15) 50%, transparent 80%)',
                 }}
               >
-                <span style={{ fontSize: '24px' }}>
-                  {voiceState === 'LISTENING' ? '🎙️' : voiceState === 'THINKING' ? '⚡' : voiceState === 'SPEAKING' ? '🔊' : '✨'}
+                {/* Orbital energy particle nodes */}
+                <div className="absolute -top-1 left-1/2 w-2 h-2 rounded-full bg-cyan-300 shadow-[0_0_12px_#38BDF8,0_0_24px_#2DB7F2]" />
+                <div className="absolute -bottom-1 left-1/4 w-1.5 h-1.5 rounded-full bg-violet-300 shadow-[0_0_10px_#818CF8]" />
+              </div>
+
+              {/* Ring 2 (Tilted ~-38° Magenta-Electric Blue) */}
+              <div
+                className={`absolute w-[118%] h-[118%] rounded-full border border-pink-400/35 shadow-[0_0_22px_rgba(236,72,153,0.35)] ${
+                  visualState === 'THINKING' ? 'animate-orbit-2-fast border-cyan-400/70 shadow-[0_0_32px_#2DB7F2]' : 'animate-orbit-2'
+                }`}
+                style={{
+                  background: 'linear-gradient(225deg, rgba(236,72,153,0.2) 0%, rgba(56,189,248,0.15) 50%, transparent 80%)',
+                }}
+              >
+                <div className="absolute top-1/3 -right-1 w-2 h-2 rounded-full bg-pink-300 shadow-[0_0_12px_#F472B6,0_0_20px_#EC4899]" />
+                <div className="absolute bottom-1/4 -left-1 w-1.5 h-1.5 rounded-full bg-cyan-200 shadow-[0_0_10px_#38BDF8]" />
+              </div>
+
+              {/* Ring 3 (Horizontal Crown Halo) */}
+              <div className="absolute w-[95%] h-[95%] rounded-full border border-sky-300/25 animate-orbit-halo">
+                <div className="absolute top-1/2 -left-1 w-1 h-1 rounded-full bg-white shadow-[0_0_8px_#FFF]" />
+                <div className="absolute top-1/2 -right-1 w-1 h-1 rounded-full bg-white shadow-[0_0_8px_#FFF]" />
+              </div>
+            </div>
+
+            {/* C. Digital Human Face Base Asset */}
+            <div className="relative w-[86%] h-[86%] flex items-center justify-center">
+              <img
+                src={faceBase}
+                alt="AIVA Holographic Intelligence"
+                className="w-full h-full object-contain pointer-events-none select-none drop-shadow-[0_0_24px_rgba(45,183,242,0.45)]"
+                draggable={false}
+              />
+
+              {/* D. Natural Eyelid Blinking Layer */}
+              <img
+                src={eyelidsImg}
+                alt=""
+                className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-100 ease-in-out ${
+                  isBlinking ? 'opacity-100' : 'opacity-0'
+                }`}
+                draggable={false}
+              />
+
+              {/* E. Viseme Lip-Sync Layer (Only during speech) */}
+              {visualState === 'SPEAKING' && (
+                <>
+                  <img
+                    src={mouthSlight}
+                    alt=""
+                    className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-150 ${
+                      activeViseme === 'slight' ? 'opacity-100' : 'opacity-0'
+                    }`}
+                    draggable={false}
+                  />
+                  <img
+                    src={mouthMid}
+                    alt=""
+                    className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-150 ${
+                      activeViseme === 'mid' ? 'opacity-100' : 'opacity-0'
+                    }`}
+                    draggable={false}
+                  />
+                  <img
+                    src={mouthWide}
+                    alt=""
+                    className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-150 ${
+                      activeViseme === 'wide' ? 'opacity-100' : 'opacity-0'
+                    }`}
+                    draggable={false}
+                  />
+                  <img
+                    src={mouthO}
+                    alt=""
+                    className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-150 ${
+                      activeViseme === 'o' ? 'opacity-100' : 'opacity-0'
+                    }`}
+                    draggable={false}
+                  />
+                </>
+              )}
+            </div>
+
+            {/* F. Floating Ethereal Particle Embers */}
+            <div className="absolute inset-0 pointer-events-none overflow-visible">
+              <span className="absolute top-[12%] left-[18%] w-1.5 h-1.5 rounded-full bg-cyan-300 opacity-80 blur-[0.5px] animate-pulse" />
+              <span className="absolute top-[28%] right-[10%] w-1 h-1 rounded-full bg-pink-300 opacity-70 blur-[0.5px] animate-ping" />
+              <span className="absolute bottom-[20%] left-[14%] w-1.5 h-1.5 rounded-full bg-violet-300 opacity-75 blur-[0.5px] animate-pulse" />
+              <span className="absolute bottom-[15%] right-[22%] w-1 h-1 rounded-full bg-cyan-200 opacity-85 blur-[0.5px]" />
+            </div>
+          </div>
+
+          {/* 3. LATEST RESPONSE MESSAGE (Floating Holographic Dialogue Bubble) */}
+          {latestResponse && (
+            <div className="mt-2 mb-3 max-w-[560px] w-[90vw] p-4 rounded-2xl bg-slate-950/75 backdrop-blur-2xl border border-cyan-500/30 shadow-[0_0_35px_rgba(45,183,242,0.2),0_10px_35px_rgba(0,0,0,0.6)] text-slate-100 text-sm leading-relaxed relative animate-materialize">
+              <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-cyan-500/20 text-[11px] font-mono">
+                <span className="flex items-center gap-1.5 text-cyan-300 font-semibold tracking-wider">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_6px_#2DB7F2]" />
+                  AIVA INTELLIGENCE
+                </span>
+                <span className="text-slate-400">
+                  {latestResponse.target} • {latestResponse.model} • {latestResponse.latencyMs}ms
                 </span>
               </div>
+              <p className="font-normal text-slate-100 select-text cursor-text">{latestResponse.content}</p>
+            </div>
+          )}
+
+          {/* 4. HOLOGRAPHIC COMMAND CONDUIT (Futuristic Glass Textbox) */}
+          <div className="w-[90vw] max-w-[540px] rounded-2xl bg-slate-950/70 backdrop-blur-2xl border border-cyan-500/40 p-2 px-3 shadow-[0_0_35px_rgba(45,183,242,0.22),0_10px_40px_rgba(0,0,0,0.7)] animate-conduit-glow flex items-center gap-3">
+            {/* Status Indicator Pill */}
+            <div
+              className={`px-2.5 py-1 rounded-full text-[10px] font-mono tracking-widest font-bold uppercase border shadow-sm transition-all duration-300 flex items-center gap-1.5 ${statusColor}`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+              {statusLabel}
             </div>
 
-            {/* Latest Assistant Response Card */}
-            <div style={{ width: '100%', maxWidth: '780px', background: '#0e131f', border: '1px solid #1e293b', borderRadius: '12px', padding: '18px 22px', boxShadow: '0 8px 30px rgba(0,0,0,0.4)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 700, color: '#38bdf8', letterSpacing: '1px' }}>AIVA INTELLIGENCE</span>
-                {latestAivaMsg && (
-                  <div style={{ display: 'flex', gap: '8px', fontSize: '10px' }}>
-                    <span style={{ padding: '2px 8px', borderRadius: '4px', background: '#1e293b', color: '#94a3b8' }}>
-                      Node: <strong style={{ color: '#38bdf8' }}>{latestAivaMsg.target || 'Fabric'}</strong>
-                    </span>
-                    <span style={{ padding: '2px 8px', borderRadius: '4px', background: '#1e293b', color: '#94a3b8' }}>
-                      Model: <strong style={{ color: '#a78bfa' }}>{latestAivaMsg.model || 'AIVA'}</strong>
-                    </span>
-                    {latestAivaMsg.latencyMs && (
-                      <span style={{ padding: '2px 8px', borderRadius: '4px', background: '#1e293b', color: '#10b981' }}>
-                        {latestAivaMsg.latencyMs}ms
-                      </span>
-                    )}
-                  </div>
+            {/* Input Field */}
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputText}
+              onChange={(e) => {
+                setInputText(e.target.value);
+                resetDormancyTimer(20000);
+              }}
+              onFocus={() => {
+                isInputFocusedRef.current = true;
+                if (dormancyTimerRef.current) clearTimeout(dormancyTimerRef.current);
+              }}
+              onBlur={() => {
+                isInputFocusedRef.current = false;
+                resetDormancyTimer(10000);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !isSending) {
+                  e.preventDefault();
+                  executeCommand(inputText);
+                }
+              }}
+              placeholder="Ask AIVA anything (or speak hands-free)..."
+              disabled={isSending}
+              className="flex-1 bg-transparent border-0 outline-none text-slate-100 placeholder-slate-400 text-sm font-medium tracking-wide"
+            />
+
+            {/* Audio Wave / Microphone Status */}
+            <div className="flex items-center gap-2">
+              {visualState === 'SPEAKING' || visualState === 'LISTENING' ? (
+                <div className="flex items-center gap-0.5 h-5 px-1">
+                  <span className="w-1 bg-cyan-400 rounded-full animate-wave-bar" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1 bg-violet-400 rounded-full animate-wave-bar" style={{ animationDelay: '200ms' }} />
+                  <span className="w-1 bg-pink-400 rounded-full animate-wave-bar" style={{ animationDelay: '400ms' }} />
+                </div>
+              ) : null}
+
+              {/* Send / Mic Button */}
+              <button
+                onClick={() => {
+                  if (inputText.trim()) executeCommand(inputText);
+                }}
+                disabled={isSending || !inputText.trim()}
+                className={`p-2 rounded-xl transition-all ${
+                  inputText.trim() && !isSending
+                    ? 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-[0_0_15px_#2DB7F2]'
+                    : 'bg-slate-800/60 text-slate-500 cursor-not-allowed'
+                }`}
+                title="Send directive (Enter)"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                </svg>
+              </button>
+
+              {/* Dismiss Button */}
+              <button
+                onClick={() => dismissAiva()}
+                className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors"
+                title="Dismiss AIVA (Esc)"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Discreet Hint */}
+          <div className="mt-2 text-[11px] font-mono text-cyan-300/60 tracking-wider flex items-center gap-3">
+            <span>Press <kbd className="px-1 py-0.5 rounded bg-slate-900/60 border border-slate-700/60 text-slate-300">Enter</kbd> to submit</span>
+            <span>•</span>
+            <span><kbd className="px-1 py-0.5 rounded bg-slate-900/60 border border-slate-700/60 text-slate-300">Esc</kbd> to dismiss</span>
+          </div>
+        </div>
+      )}
+
+      {/* 5. SLIDE-OVER TELEMETRY & DIAGNOSTICS DRAWER (Secondary Interface) */}
+      {showDiagnostics && (
+        <div
+          className="pointer-events-auto absolute inset-y-0 right-0 w-[420px] max-w-full bg-slate-950/85 backdrop-blur-2xl border-l border-cyan-500/30 p-6 flex flex-col z-50 shadow-[-10px_0_40px_rgba(0,0,0,0.8)] animate-materialize font-mono text-xs"
+          onMouseEnter={handleMouseEnterInteractive}
+          onMouseLeave={handleMouseLeaveInteractive}
+        >
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${fabricState?.isOnline ? 'bg-emerald-400 shadow-[0_0_8px_#34D399]' : 'bg-rose-400'}`} />
+              <h2 className="text-sm font-semibold text-slate-100 tracking-wider uppercase">Fabric Telemetry</h2>
+            </div>
+            <button
+              onClick={() => setShowDiagnostics(false)}
+              className="text-slate-400 hover:text-slate-200 p-1"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto space-y-4 py-4 pr-1 text-slate-300">
+            {/* Identity Card */}
+            <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-1.5">
+              <div className="text-[10px] text-cyan-400 uppercase tracking-widest">Node Identity</div>
+              <div className="text-slate-200 font-bold">{fabricState?.deviceIdentity?.node_id || 'PC-B'} ({fabricState?.deviceIdentity?.node_role || 'CPU_LOCAL_NODE'})</div>
+              <div className="text-[11px] text-slate-400 truncate">ID: {fabricState?.deviceIdentity?.device_id || 'unregistered'}</div>
+              <div className="text-[11px] text-slate-400">Host: {fabricState?.hardwareInfo?.hostname || 'Cosmic_004'}</div>
+            </div>
+
+            {/* Hardware Telemetry */}
+            <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-1.5">
+              <div className="text-[10px] text-cyan-400 uppercase tracking-widest">Hardware Compute</div>
+              <div className="text-slate-300">CPU: {fabricState?.hardwareInfo?.cpu?.model || 'Intel Core i5'} ({fabricState?.hardwareInfo?.cpu?.cores || 12} cores)</div>
+              <div className="text-slate-300">RAM: {fabricState?.hardwareInfo?.memory?.ramUsedGb || 0}GB / {fabricState?.hardwareInfo?.memory?.totalGb || 16}GB</div>
+              <div className="text-slate-300">GPU: {fabricState?.hardwareInfo?.gpu?.model || 'Intel Iris Xe'} (CUDA: {String(fabricState?.hardwareInfo?.gpu?.hasCuda || false)})</div>
+            </div>
+
+            {/* Diagnostics Log Stream */}
+            <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] text-cyan-400 uppercase tracking-widest">
+                <span>Local Diagnostics Log</span>
+                <button
+                  onClick={() => window.electronAPI?.openLogFolder()}
+                  className="text-cyan-400 hover:underline"
+                >
+                  Open File
+                </button>
+              </div>
+              <div className="h-44 overflow-y-auto bg-black/60 p-2 rounded-lg text-[10px] space-y-1 text-slate-400 font-mono">
+                {logs.length === 0 ? (
+                  <div className="text-slate-600 italic">No log entries recorded.</div>
+                ) : (
+                  logs.slice(-35).map((l, i) => (
+                    <div key={i} className="truncate hover:text-slate-200">{l}</div>
+                  ))
                 )}
               </div>
-              <div style={{ fontSize: '14px', lineHeight: '1.6', color: '#f1f5f9', whiteSpace: 'pre-wrap', maxHeight: '180px', overflowY: 'auto' }}>
-                {latestAivaMsg?.content || 'AIVA is online and standing by. You can speak commands using "AIVA", tap the neural core to listen, or enter text below.'}
-              </div>
-            </div>
-
-            {/* Quick Contextual Lens Shortcuts */}
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'center' }}>
-              {[
-                { id: 'tasks', label: '📋 Task Protocols' },
-                { id: 'projects', label: '🎯 Initiative Matrix' },
-                { id: 'memory', label: '🧠 Cognitive Memory' },
-                { id: 'fabric', label: '⚡ Compute Nodes' },
-              ].map((chip) => (
-                <button
-                  key={chip.id}
-                  onClick={() => {
-                    if (chip.id === 'fabric') setActiveTab('fabric');
-                    else setActiveLens(chip.id as any);
-                  }}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '20px',
-                    background: 'rgba(30, 41, 59, 0.7)',
-                    border: '1px solid #334155',
-                    color: '#94a3b8',
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Active Lens Overlay Modal */}
-            {activeLens && (
-              <div style={{ position: 'fixed', top: '100px', left: '50%', transform: 'translateX(-50%)', width: '550px', background: '#0e131f', border: '1px solid #38bdf8', borderRadius: '12px', padding: '20px', zIndex: 100, boxShadow: '0 12px 40px rgba(0,0,0,0.8)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <h3 style={{ margin: 0, fontSize: '14px', color: '#38bdf8' }}>
-                    {activeLens === 'tasks' ? '📋 Task Protocols' : activeLens === 'projects' ? '🎯 Initiative Matrix' : '🧠 Cognitive Memory Archive'}
-                  </h3>
-                  <button onClick={() => setActiveLens(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '16px' }}>×</button>
-                </div>
-                <div style={{ fontSize: '12px', lineHeight: '1.6', color: '#cbd5e1' }}>
-                  {activeLens === 'tasks' && <p>• Distributed execution active across PC-A (CUDA GPU) and PC-B (Intel CPU)<br />• Automatic failure recovery and cloud fallback verified<br />• Capability scheduler continuously evaluates local queue</p>}
-                  {activeLens === 'projects' && <p>• AIVA Personal AI OS - Unified Multi-Platform System<br />• Autonomous Local-First Architecture with Cloud Fallback<br />• Independent Node Operation for PC-A, PC-B, and Android Client</p>}
-                  {activeLens === 'memory' && <p>• Persistent Device Identity stored locally<br />• Authentication tokens stored securely in OS UserData<br />• Single-owner isolation enforced across API boundaries</p>}
-                </div>
-              </div>
-            )}
-
-            {/* Command Conduit Bar */}
-            <form onSubmit={handleSendMessage} style={{ width: '100%', maxWidth: '780px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <button
-                type="button"
-                onClick={toggleManualMic}
-                style={{
-                  width: '42px',
-                  height: '42px',
-                  borderRadius: '50%',
-                  background: isListeningManual ? '#ef4444' : '#1e293b',
-                  border: isListeningManual ? '2px solid #f87171' : '1px solid #334155',
-                  color: '#ffffff',
-                  fontSize: '16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                  transition: 'all 0.2s ease',
-                }}
-                title={isListeningManual ? 'Click to stop listening' : 'Click to speak'}
-              >
-                🎙️
-              </button>
-
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="Ask AIVA anything or say 'AIVA' to speak..."
-                disabled={isSending}
-                style={{
-                  flex: 1,
-                  background: '#0e131f',
-                  border: '1px solid #334155',
-                  borderRadius: '10px',
-                  padding: '12px 18px',
-                  color: '#f8fafc',
-                  fontSize: '13px',
-                  outline: 'none',
-                }}
-              />
-
-              <button
-                type="submit"
-                disabled={isSending || !inputText.trim()}
-                style={{
-                  padding: '12px 22px',
-                  borderRadius: '10px',
-                  border: 'none',
-                  background: isSending || !inputText.trim() ? '#334155' : '#2563eb',
-                  color: '#ffffff',
-                  fontWeight: 600,
-                  fontSize: '13px',
-                  cursor: isSending || !inputText.trim() ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {isSending ? 'Routing...' : 'Send'}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* TAB 2: CHAT STREAM & HISTORY                             */}
-        {/* ======================================================== */}
-        {activeTab === 'chat' && (
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, padding: '16px', gap: '12px', height: '100%', boxSizing: 'border-box' }}>
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '8px' }}>
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  style={{
-                    alignSelf: m.sender === 'user' ? 'flex-end' : 'flex-start',
-                    maxWidth: '75%',
-                    background: m.sender === 'user' ? '#1e3a8a' : '#111827',
-                    border: m.sender === 'user' ? '1px solid #2563eb' : '1px solid #1f2937',
-                    borderRadius: '10px',
-                    padding: '10px 14px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                  }}
-                >
-                  <div style={{ fontSize: '13px', lineHeight: '1.5', whiteSpace: 'pre-wrap', color: '#f1f5f9', userSelect: 'text' }}>
-                    {m.content}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', fontSize: '10px', color: '#94a3b8' }}>
-                    <span>{m.timestamp}</span>
-                    {m.target && <span style={{ color: '#38bdf8' }}>Node: {m.target}</span>}
-                    {m.model && <span style={{ color: '#a78bfa' }}>Model: {m.model}</span>}
-                    {m.latencyMs && <span>{m.latencyMs}ms</span>}
-                  </div>
-                </div>
-              ))}
-              {isSending && (
-                <div style={{ alignSelf: 'flex-start', background: '#111827', border: '1px solid #1f2937', borderRadius: '10px', padding: '10px 14px', color: '#38bdf8', fontSize: '12px' }}>
-                  AIVA reasoning through distributed fabric...
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <form onSubmit={handleSendMessage} style={{ display: 'flex', gap: '8px', borderTop: '1px solid #1e2638', paddingTop: '12px' }}>
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="Ask AIVA anything (executes local-first or cloud fallback)..."
-                disabled={isSending}
-                style={{
-                  flex: 1,
-                  background: '#111827',
-                  border: '1px solid #334155',
-                  borderRadius: '8px',
-                  padding: '10px 14px',
-                  color: '#f8fafc',
-                  fontSize: '13px',
-                  outline: 'none',
-                }}
-              />
-              <button
-                type="submit"
-                disabled={isSending || !inputText.trim()}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  background: isSending || !inputText.trim() ? '#334155' : '#2563eb',
-                  color: '#ffffff',
-                  fontWeight: 600,
-                  fontSize: '13px',
-                  cursor: isSending || !inputText.trim() ? 'not-allowed' : 'pointer',
-                }}
-              >
-                Send
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* TAB 3: FABRIC & HARDWARE DIAGNOSTICS                     */}
-        {/* ======================================================== */}
-        {activeTab === 'fabric' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' }}>
-            <div style={{ background: '#0e131f', border: '1px solid #1e2638', borderRadius: '10px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#38bdf8', fontWeight: 700 }}>Device Identity & Node</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
-                <div><strong>Node ID:</strong> {nodeId}</div>
-                <div><strong>Role:</strong> {nodeRole}</div>
-                <div><strong>Device ID:</strong> {fabricState?.deviceIdentity?.device_id || 'Loading...'}</div>
-                <div><strong>Hostname:</strong> {fabricState?.hardwareInfo?.hostname || 'Windows Device'}</div>
-                <div><strong>Backend URL:</strong> {fabricState?.backendUrl}</div>
-                <div><strong>Fabric Status:</strong> <span style={{ color: isOnline ? '#10b981' : '#f59e0b' }}>{isOnline ? 'ONLINE' : 'CONNECTING'}</span></div>
-              </div>
-            </div>
-
-            <div style={{ background: '#0e131f', border: '1px solid #1e2638', borderRadius: '10px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#38bdf8', fontWeight: 700 }}>Hardware Specs</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
-                <div><strong>CPU:</strong> {cpu?.model || 'Intel Core'} ({cpu?.cores || 8} cores)</div>
-                <div><strong>Memory Total:</strong> {memory?.totalGb || 16} GB (Available: {memory?.availableGb || 4} GB)</div>
-                <div><strong>GPU:</strong> {gpu?.model || 'Intel Iris Xe'}</div>
-                <div><strong>CUDA Acceleration:</strong> <span style={{ color: gpu?.hasCuda ? '#10b981' : '#94a3b8' }}>{gpu?.hasCuda ? 'Active (NVIDIA)' : 'Disabled (CPU Node)'}</span></div>
-                <div><strong>Capabilities:</strong> {fabricState?.hardwareInfo?.capabilities?.join(', ') || 'LOCAL_LLM, CPU_INFERENCE'}</div>
-              </div>
-            </div>
-
-            <div style={{ background: '#0e131f', border: '1px solid #1e2638', borderRadius: '10px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#38bdf8', fontWeight: 700 }}>Local AI Engine (Ollama)</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
-                <div><strong>Endpoint:</strong> http://127.0.0.1:11434</div>
-                <div><strong>Active Model:</strong> {nodeRole === 'AI_POWER_NODE' ? 'qwen3.5:latest' : 'qwen3:4b'}</div>
-                <button
-                  onClick={async () => {
-                    const res = await window.electronAPI?.testOllamaPing();
-                    alert(res?.online ? `Ollama Online! Models: ${res.models?.join(', ')}` : `Ollama unreachable: ${res?.error}`);
-                  }}
-                  style={{ marginTop: '8px', padding: '6px 12px', background: '#1e293b', border: '1px solid #334155', color: '#38bdf8', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', alignSelf: 'flex-start' }}
-                >
-                  Ping Local Ollama
-                </button>
-              </div>
-            </div>
-
-            <div style={{ background: '#0e131f', border: '1px solid #1e2638', borderRadius: '10px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#38bdf8', fontWeight: 700 }}>Node Management</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px' }}>
-                <div><strong>Last Heartbeat:</strong> {fabricState?.lastHeartbeatTime ? new Date(fabricState.lastHeartbeatTime).toLocaleTimeString() : 'Pending'}</div>
-                <button
-                  onClick={async () => {
-                    const res = await window.electronAPI?.reRegisterNode();
-                    alert(res?.success ? 'Node re-registered successfully!' : 'Re-registration failed');
-                  }}
-                  style={{ marginTop: '8px', padding: '6px 12px', background: '#2563eb', border: 'none', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', alignSelf: 'flex-start' }}
-                >
-                  Re-register with AIVA Fabric
-                </button>
-              </div>
             </div>
           </div>
-        )}
 
-        {/* ======================================================== */}
-        {/* TAB 4: WORKER TELEMETRY                                  */}
-        {/* ======================================================== */}
-        {activeTab === 'worker' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ background: '#0e131f', border: '1px solid #1e2638', borderRadius: '10px', padding: '16px' }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', color: '#38bdf8', fontWeight: 700 }}>Background Worker Service</h3>
-              <p style={{ fontSize: '12px', color: '#94a3b8', margin: '0 0 16px 0' }}>
-                This node continuously claims and executes distributed inference workloads dispatched across the AIVA compute fabric.
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
-                <div style={{ background: '#111827', padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '22px', fontWeight: 700, color: '#38bdf8' }}>{fabricState?.workerStats?.tasksAssigned || 0}</div>
-                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Tasks Claimed</div>
-                </div>
-                <div style={{ background: '#111827', padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '22px', fontWeight: 700, color: '#10b981' }}>{fabricState?.workerStats?.tasksCompleted || 0}</div>
-                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Completed</div>
-                </div>
-                <div style={{ background: '#111827', padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '22px', fontWeight: 700, color: '#ef4444' }}>{fabricState?.workerStats?.tasksFailed || 0}</div>
-                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Failed</div>
-                </div>
-                <div style={{ background: '#111827', padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '22px', fontWeight: 700, color: '#a78bfa' }}>{fabricState?.workerStats?.lastTaskLatencyMs || 0}ms</div>
-                  <div style={{ fontSize: '11px', color: '#64748b', marginTop: '4px' }}>Last Latency</div>
-                </div>
-              </div>
-            </div>
+          <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
+            <button
+              onClick={() => window.electronAPI?.reRegisterNode()}
+              className="px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/30 text-[11px]"
+            >
+              Re-register Node
+            </button>
+            <button
+              onClick={() => {
+                setAudioEnabled((p) => !p);
+              }}
+              className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 text-[11px]"
+            >
+              Audio: {audioEnabled ? 'ON' : 'OFF'}
+            </button>
           </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* TAB 5: SYSTEM LOGS & DIAGNOSTICS                         */}
-        {/* ======================================================== */}
-        {activeTab === 'logs' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px', gap: '10px', height: '100%', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '12px', color: '#94a3b8' }}>Live System Diagnostic Log Stream (Token-Redacted)</span>
-              <button
-                onClick={() => window.electronAPI?.openLogFolder()}
-                style={{ padding: '4px 10px', background: '#1e293b', border: '1px solid #334155', color: '#38bdf8', borderRadius: '6px', cursor: 'pointer', fontSize: '11px' }}
-              >
-                Open Log Folder
-              </button>
-            </div>
-            <div style={{ flex: 1, background: '#05070a', border: '1px solid #1e2638', borderRadius: '8px', padding: '12px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '11px', color: '#94a3b8', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {logs.map((line, idx) => (
-                <div key={idx} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {line}
-                </div>
-              ))}
-              <div ref={logsEndRef} />
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* TAB 6: SETTINGS & IDENTITY                               */}
-        {/* ======================================================== */}
-        {activeTab === 'settings' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '24px', maxWidth: '600px' }}>
-            <div style={{ background: '#0e131f', border: '1px solid #1e2638', borderRadius: '10px', padding: '20px' }}>
-              <h3 style={{ margin: '0 0 16px 0', fontSize: '14px', color: '#38bdf8', fontWeight: 700 }}>AIVA Owner Authentication</h3>
-              <p style={{ fontSize: '12px', color: '#94a3b8', margin: '0 0 16px 0' }}>
-                Authenticate this node with your AIVA central account to enable authenticated peer communication and compute synchronization.
-              </p>
-              <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Owner Email</label>
-                  <input
-                    type="email"
-                    value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    placeholder="owner@aiva.local"
-                    style={{ width: '100%', boxSizing: 'border-box', background: '#111827', border: '1px solid #334155', borderRadius: '6px', padding: '8px 12px', color: '#f8fafc', fontSize: '12px' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', color: '#94a3b8', marginBottom: '4px' }}>Password</label>
-                  <input
-                    type="password"
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    style={{ width: '100%', boxSizing: 'border-box', background: '#111827', border: '1px solid #334155', borderRadius: '6px', padding: '8px 12px', color: '#f8fafc', fontSize: '12px' }}
-                  />
-                </div>
-                {authError && <div style={{ color: '#ef4444', fontSize: '11px' }}>{authError}</div>}
-                <button
-                  type="submit"
-                  disabled={authLoading}
-                  style={{ marginTop: '8px', padding: '10px', background: '#2563eb', border: 'none', borderRadius: '6px', color: '#fff', fontWeight: 600, fontSize: '12px', cursor: authLoading ? 'not-allowed' : 'pointer' }}
-                >
-                  {authLoading ? 'Authenticating...' : 'Authenticate & Link Node'}
-                </button>
-              </form>
-            </div>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

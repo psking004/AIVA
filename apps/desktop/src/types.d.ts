@@ -58,6 +58,8 @@ export interface IElectronAPI {
   onVoiceState?: (callback: (data: { state: string }) => void) => () => void;
   notifyVoiceLifecycle?: (state: string) => Promise<void>;
   getWakeWordStatus?: () => Promise<{ enabled: boolean; keyword: string; provider: string }>;
+  setIgnoreMouseEvents?: (ignore: boolean, options?: { forward: boolean }) => Promise<void>;
+  setDesktopOverlayMode?: (mode: string) => Promise<void>;
   minimizeWindow: () => Promise<void>;
   maximizeWindow: () => Promise<void>;
   closeWindow: () => Promise<void>;
@@ -68,4 +70,9 @@ declare global {
   interface Window {
     electronAPI?: IElectronAPI;
   }
+}
+
+declare module '*.png' {
+  const value: string;
+  export default value;
 }

@@ -10,4 +10,170 @@ html, body, #root {
   overflow: hidden;
   background: transparent !important;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  user-select: none;
+}
+
+/* 3D Perspective Container for Holographic Rings */
+.perspective-1000 {
+  perspective: 1000px;
+  transform-style: preserve-3d;
+}
+
+/* Floating animation */
+@keyframes holoFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.animate-holo-float {
+  animation: holoFloat 5s ease-in-out infinite;
+}
+
+/* Primary Orbital Ring (Cyan-Violet) */
+@keyframes orbit1 {
+  0% {
+    transform: rotateX(68deg) rotateY(22deg) rotateZ(0deg);
+  }
+  100% {
+    transform: rotateX(68deg) rotateY(22deg) rotateZ(360deg);
+  }
+}
+
+.animate-orbit-1 {
+  animation: orbit1 16s linear infinite;
+  transform-style: preserve-3d;
+}
+
+.animate-orbit-1-fast {
+  animation: orbit1 6s linear infinite;
+  transform-style: preserve-3d;
+}
+
+/* Secondary Intersecting Orbital Ring (Magenta-Sky) */
+@keyframes orbit2 {
+  0% {
+    transform: rotateX(72deg) rotateY(-38deg) rotateZ(360deg);
+  }
+  100% {
+    transform: rotateX(72deg) rotateY(-38deg) rotateZ(0deg);
+  }
+}
+
+.animate-orbit-2 {
+  animation: orbit2 22s linear infinite;
+  transform-style: preserve-3d;
+}
+
+.animate-orbit-2-fast {
+  animation: orbit2 8s linear infinite;
+  transform-style: preserve-3d;
+}
+
+/* Crown Halo Ring */
+@keyframes orbitHalo {
+  0% {
+    transform: rotateX(78deg) rotateZ(0deg);
+  }
+  100% {
+    transform: rotateX(78deg) rotateZ(360deg);
+  }
+}
+
+.animate-orbit-halo {
+  animation: orbitHalo 28s linear infinite;
+  transform-style: preserve-3d;
+}
+
+/* Ethereal Aura Breathing Pulse */
+@keyframes auraPulse {
+  0%, 100% {
+    transform: scale(1.0);
+    opacity: 0.72;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.94;
+  }
+}
+
+.animate-aura-pulse {
+  animation: auraPulse 4s ease-in-out infinite;
+}
+
+.animate-aura-pulse-fast {
+  animation: auraPulse 1.8s ease-in-out infinite;
+}
+
+/* Materializing Bloom Transition */
+@keyframes materializeIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+    filter: blur(12px) brightness(1.8);
+  }
+  70% {
+    opacity: 0.9;
+    filter: blur(2px) brightness(1.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0px) brightness(1.0);
+  }
+}
+
+.animate-materialize {
+  animation: materializeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Dismissing Dissolve Transition */
+@keyframes dismissOut {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.9);
+    filter: blur(8px) brightness(0.6);
+  }
+}
+
+.animate-dismiss {
+  animation: dismissOut 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Text Conduit Glow Pulse */
+@keyframes conduitGlow {
+  0%, 100% {
+    box-shadow: 0 0 25px rgba(45, 183, 242, 0.22), 0 10px 30px rgba(0, 0, 0, 0.5);
+    border-color: rgba(45, 183, 242, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 45px rgba(139, 92, 246, 0.35), 0 10px 35px rgba(0, 0, 0, 0.6);
+    border-color: rgba(139, 92, 246, 0.55);
+  }
+}
+
+.animate-conduit-glow {
+  animation: conduitGlow 3.5s ease-in-out infinite;
+}
+
+/* Audio wave bar pulsing */
+@keyframes waveBar {
+  0%, 100% {
+    height: 4px;
+  }
+  50% {
+    height: 18px;
+  }
+}
+
+.animate-wave-bar {
+  animation: waveBar 0.8s ease-in-out infinite;
 }

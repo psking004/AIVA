@@ -43,6 +43,11 @@
       "assets/**/*",
       "renderer/**/*"
     ],
+    "asarUnpack": [
+      "speech-listener.ps1",
+      "kokoro-service.py",
+      "whisper-service.py"
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico",
