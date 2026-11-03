@@ -1,5 +1,19 @@
 # AIVA - Personal AI Operating System
 
+[![CI](https://github.com/psking004/AIVA/actions/workflows/ci.yml/badge.svg)](https://github.com/psking004/AIVA/actions/workflows/ci.yml)
+[![API health](https://img.shields.io/website?url=https%3A%2F%2Faiva-yitg.onrender.com%2Fhealth&label=API%20health)](https://aiva-yitg.onrender.com/health)
+
+> **AIVA** is a self-hosted personal AI assistant that runs across web, desktop and mobile from a single TypeScript monorepo.
+>
+> - **Backend:** NestJS (Fastify) + Prisma (PostgreSQL) + Redis
+> - **Web:** Next.js 14
+> - **Desktop:** Electron
+> - **Mobile:** React Native (Expo)
+> - **AI:** multi-LLM routing across local Ollama (Qwen3) and cloud providers (OpenRouter, Google Gemini) with automatic fallback
+>
+> **Live API:** [aiva-yitg.onrender.com/health](https://aiva-yitg.onrender.com/health) (hosted on Render's free tier, so the first request may take a few seconds to wake up)
+
+
 **AIVA** (Artificial Intelligent Virtual Assistant) is a production-grade Personal AI Operating System that acts as your central digital brain, managing tasks, notes, files, emails, calendar, and workflow automation through an intelligent AI interface.
 
 ## Features
@@ -27,7 +41,6 @@
 - Redis (caching)
 
 ### AI Layer
-### AI Layer
 - AIVA Model Router & Orchestrator
 - **Local:** Ollama → Qwen3 8B (Offline-capable)
 - **Cloud:** OpenRouter → Qwen (Cloud accelerator & fallback)
@@ -52,8 +65,8 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/your-org/aiva.git
-cd aiva
+git clone https://github.com/psking004/AIVA.git
+cd AIVA
 
 # Install dependencies
 pnpm install
@@ -142,6 +155,7 @@ GET  /analytics/dashboard
 ## Architecture
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system architecture, database schema, and design decisions.
+Engineering reports, audits and acceptance notes from development live in [docs/reports/](./docs/reports/).
 
 ## Project Structure
 
@@ -149,8 +163,8 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system architecture, datab
 aiva/
 ├── apps/
 │   ├── web/           # Next.js web application
-│   ├── desktop/       # Electron desktop app (planned)
-│   └── mobile/        # React Native app (planned)
+│   ├── desktop/       # Electron desktop app
+│   └── mobile/        # React Native (Expo) app
 ├── backend/
 │   ├── src/
 │   │   ├── ai/        # AI orchestration (AIVA core)

@@ -66,3 +66,5 @@ apps/mobile/android/app/build/
 apps/mobile/android/.gradle/
 apps/mobile/wakeword_backup/
 release/
+# Local node identity (machine-specific, never commit)
+.aiva_node_identity.json
