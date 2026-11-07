@@ -211,18 +211,39 @@ export class ModelRouterService implements OnModuleInit {
 
     // Android Autonomous World: Route directly to Gemini (zero PC / Ollama dependency)
     // with automatic resilient fallback to secondary cloud (OpenRouter)
+    // when using default, auto, or cloud-first strategies.
+    // Explicit single-provider strategies (gemini-only, openrouter-only, local-only, local-first)
+    // are strictly preserved and never violated.
     if (
       options?.clientPlatform === 'android' &&
       options?.strategy !== 'local-first' &&
-      options?.strategy !== 'local-only'
+      options?.strategy !== 'local-only' &&
+      options?.strategy !== 'gemini-only' &&
+      options?.strategy !== 'openrouter-only'
     ) {
       this.logger.debug('[AIVA ROUTER] Android client detected: routing strictly to Gemini (zero PC dependency).');
       this.checkCloudQuota();
       try {
-        return await this.executeProvider(this.geminiProvider, messages, mergedOptions, trace);
+        const geminiOptions: CompletionOptions = {
+          ...mergedOptions,
+          model: this.geminiProvider.defaultModel,
+          timeoutMs: Math.min(mergedOptions.timeoutMs || 10000, 10000),
+        };
+        return await this.executeProvider(this.geminiProvider, messages, geminiOptions, trace);
       } catch (geminiError: any) {
         this.logger.warn(`Gemini cloud execution failed for Android (${geminiError.message}). Falling back to secondary cloud provider (OpenRouter)...`);
-        return await this.executeProvider(this.openRouterProvider, messages, mergedOptions, trace);
+        const openRouterOptions: CompletionOptions = {
+          ...mergedOptions,
+          model: this.openRouterProvider.defaultModel,
+          maxTokens: Math.min(mergedOptions.maxTokens ?? 2048, 2048),
+          timeoutMs: Math.min(mergedOptions.timeoutMs || 45000, 45000),
+        };
+        try {
+          return await this.executeProvider(this.openRouterProvider, messages, openRouterOptions, trace);
+        } catch (openRouterError: any) {
+          this.logger.error(`Both cloud providers failed for Android. Gemini: "${geminiError.message}", OpenRouter: "${openRouterError.message}"`);
+          throw new Error('All cloud AI providers are currently unavailable. Please try again shortly.');
+        }
       }
     }
 
@@ -279,14 +300,46 @@ export class ModelRouterService implements OnModuleInit {
 
     // Android Autonomous World: Stream directly via Gemini
     // unless caller explicitly requested local-first offload to PC
+    // With automatic resilient fallback to secondary cloud (OpenRouter)
+    // when using default, auto, or cloud-first strategies.
+    // Explicit single-provider strategies (gemini-only, openrouter-only, local-only, local-first)
+    // are strictly preserved and never violated.
     if (
       options?.clientPlatform === 'android' &&
       options?.strategy !== 'local-first' &&
-      options?.strategy !== 'local-only'
+      options?.strategy !== 'local-only' &&
+      options?.strategy !== 'gemini-only' &&
+      options?.strategy !== 'openrouter-only'
     ) {
       this.logger.debug('[AIVA ROUTER] Android client detected: streaming strictly via Gemini (zero PC dependency).');
       this.checkCloudQuota();
-      return this.geminiProvider.streamChat!(messages, onChunk, mergedOptions);
+      try {
+        const geminiOptions: CompletionOptions = {
+          ...mergedOptions,
+          model: this.geminiProvider.defaultModel,
+          timeoutMs: Math.min(mergedOptions.timeoutMs || 10000, 10000),
+        };
+        const response = await this.geminiProvider.streamChat!(messages, onChunk, geminiOptions);
+        this.recordSuccess(this.geminiProvider.name);
+        return response;
+      } catch (geminiError: any) {
+        this.recordFailure(this.geminiProvider.name);
+        this.logger.warn(`Gemini streaming failed for Android (${geminiError.message}). Falling back to OpenRouter streaming...`);
+        const openRouterOptions: CompletionOptions = {
+          ...mergedOptions,
+          model: this.openRouterProvider.defaultModel,
+          maxTokens: Math.min(mergedOptions.maxTokens ?? 2048, 2048),
+          timeoutMs: Math.min(mergedOptions.timeoutMs || 45000, 45000),
+        };
+        try {
+          const fallbackResponse = await this.openRouterProvider.streamChat!(messages, onChunk, openRouterOptions);
+          this.recordSuccess(this.openRouterProvider.name);
+          return fallbackResponse;
+        } catch (openRouterError: any) {
+          this.recordFailure(this.openRouterProvider.name);
+          throw new Error('All cloud AI streaming providers are currently unavailable. Please try again shortly.');
+        }
+      }
     }
 
     const strategy =
@@ -334,6 +387,10 @@ export class ModelRouterService implements OnModuleInit {
     trace?: AivaBackendTrace,
   ): Promise<ProviderResponse> {
     const started = Date.now();
+    const targetModel = options?.model || provider.defaultModel;
+    this.logger.log(`[MODEL] execution target=${provider.name}`);
+    this.logger.log(`[MODEL] actual provider request=${targetModel}`);
+
     if (trace) {
       trace.provider_selected = provider.name;
       trace.provider_request_started = started;
@@ -423,7 +480,11 @@ export class ModelRouterService implements OnModuleInit {
 
       try {
         this.logger.debug(`Attempting cloud inference with provider: ${provider.name}`);
-        return await this.executeProvider(provider, messages, options, trace);
+        const providerOptions: CompletionOptions = {
+          ...options,
+          model: provider.name === this.geminiProvider.name ? this.geminiProvider.defaultModel : this.openRouterProvider.defaultModel,
+        };
+        return await this.executeProvider(provider, messages, providerOptions, trace);
       } catch (error: any) {
         this.logger.warn(`Provider ${provider.name} failed: ${error.message}`);
         errors.push(`${provider.name}: ${error.message}`);
@@ -431,7 +492,7 @@ export class ModelRouterService implements OnModuleInit {
     }
 
     throw new Error(
-      `All cloud AI providers failed. Details: ${errors.join(' | ')}. Please verify OPENROUTER_API_KEY / GEMINI_API_KEY.`,
+      'All cloud AI providers are currently unavailable. Please try again shortly.',
     );
   }
 

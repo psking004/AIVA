@@ -35,15 +35,22 @@ export class GeminiProvider implements AIProvider {
 
   get defaultModel(): string {
     const configured = this.configService.get<string>('GEMINI_MODEL');
-    if (!configured || !configured.startsWith('gemini-3') || configured === 'gemini-3.8-flash') {
-      return 'gemini-3.5-flash';
+    if (
+      !configured ||
+      configured === 'gemini-3.5-flash' ||
+      configured === 'gemini-3.8-flash' ||
+      configured === 'gemini-1.5-flash' ||
+      configured === 'gemini-2.5-flash' ||
+      configured === 'gemini-2.5-flash-lite'
+    ) {
+      return 'gemini-flash-lite-latest';
     }
     return configured;
   }
 
   get timeoutMs(): number {
     const configured = this.configService.get<string>('GEMINI_TIMEOUT_MS');
-    return configured ? parseInt(configured, 10) : 15000;
+    return configured ? parseInt(configured, 10) : 10000;
   }
 
   private get baseUrl(): string {
@@ -102,6 +109,23 @@ export class GeminiProvider implements AIProvider {
     };
   }
 
+  private resolveModel(model?: string): string {
+    if (!model) return this.defaultModel;
+    if (model.includes('/') || model.includes(':') || model.startsWith('qwen') || model.startsWith('claude')) {
+      return this.defaultModel;
+    }
+    if (
+      model === 'gemini-3.5-flash' ||
+      model === 'gemini-3.8-flash' ||
+      model === 'gemini-1.5-flash' ||
+      model === 'gemini-2.5-flash' ||
+      model === 'gemini-2.5-flash-lite'
+    ) {
+      return 'gemini-flash-lite-latest';
+    }
+    return model;
+  }
+
   /**
    * Chat completion via Gemini API
    */
@@ -115,8 +139,8 @@ export class GeminiProvider implements AIProvider {
       );
     }
 
-    const model = options?.model || this.defaultModel;
-    const timeout = Math.min(options?.timeoutMs || this.timeoutMs, 15000);
+    const model = this.resolveModel(options?.model);
+    const timeout = Math.min(options?.timeoutMs || this.timeoutMs, 10000);
     const url = `${this.baseUrl}/models/${model}:generateContent?key=${this.apiKey}`;
 
     this.logger.debug(`Calling Gemini API for model ${model}`);
@@ -215,7 +239,7 @@ export class GeminiProvider implements AIProvider {
       );
     }
 
-    const model = options?.model || this.defaultModel;
+    const model = this.resolveModel(options?.model);
     const timeout = options?.timeoutMs || this.timeoutMs;
     const url = `${this.baseUrl}/models/${model}:streamGenerateContent?alt=sse&key=${this.apiKey}`;
 
@@ -358,7 +382,7 @@ export class GeminiProvider implements AIProvider {
     if (status === 429) {
       throw new Error('Gemini rate limit or quota exceeded: Please try again shortly');
     }
-    if (status >= 500) {
+    if (status === 502 || status === 503 || status === 504 || status >= 500) {
       throw new Error(`Gemini upstream service error (${status}): ${errorText || response.statusText}`);
     }
 
