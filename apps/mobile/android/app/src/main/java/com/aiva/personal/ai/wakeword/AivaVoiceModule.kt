@@ -39,7 +39,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     companion object {
         private const val TAG = "AivaVoiceModule"
         const val MODULE_NAME = "AivaVoiceModule"
-        private const val ACOUSTIC_SETTLING_DELAY_MS = 400L
+        private const val ACOUSTIC_SETTLING_DELAY_MS = 600L
     }
 
     override fun getName(): String = MODULE_NAME
@@ -101,6 +101,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 isSpeaking = true
+                pauseWakeWordService()
                 try {
                     AivaWakeWordForegroundService.resetDetectionDebounce()
                 } catch (_: Exception) {}
@@ -430,6 +431,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
         mainHandler.post {
             try {
+                pauseWakeWordService()
                 isSpeaking = true
                 val params = Bundle().apply {
                     putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)

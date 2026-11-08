@@ -42,18 +42,28 @@ export class RemoteExecService {
 
     const hasPcA = /\b(pc-?a|pca|gpu|3050|rtx)\b/i.test(clean);
     const hasPcB = /\b(pc-?b|pcb|desktop|host|workstation)\b/i.test(clean);
+    const hasPcGeneric = /\b(pc|computer|system|laptop|workstation|rig|machine|nodes?)\b/i.test(clean);
     const hasBuild = /\b(build|compile|gradle|assemble)\b/i.test(clean);
     const hasTest = /\b(test|typecheck|lint|verify)\b/i.test(clean);
     const hasCode = /\b(code|generate code|refactor|script)\b/i.test(clean);
     const hasRun = /\b(run|exec|execute|start task)\b/i.test(clean);
-    const hasStatus = /\b(status|check|ping|probe|health|info)\b/i.test(clean);
+    const hasStatus = /\b(status|check|health|ping|probe|info|state|diagnostic|how is)\b/i.test(clean);
 
-    // If query matches tri-node execution patterns
-    if (hasPcA || hasPcB || hasBuild || hasTest || (hasCode && hasRun) || (hasStatus && (hasPcA || hasPcB))) {
+    // If query matches tri-node execution patterns:
+    // 1. Mentions PC-A or PC-B specifically
+    // 2. Asks for status/check of PC, computer, system, nodes (e.g. "status of PC", "check my pc", "system status")
+    // 3. Build, test, run, or code commands
+    const isRemoteIntent =
+      hasPcA ||
+      hasPcB ||
+      (hasStatus && (hasPcGeneric || clean.includes('pc') || clean.includes('system') || clean.includes('fabric'))) ||
+      ((hasBuild || hasTest || hasRun || hasCode) && (hasPcGeneric || hasPcB || hasPcA || clean.includes('app') || clean.includes('mobile')));
+
+    if (isRemoteIntent) {
       let targetNode: NodeTarget = 'PC-B';
       if (hasPcA || (clean.includes('gpu') && !hasPcB)) {
         targetNode = 'PC-A';
-      } else if (hasPcB || hasBuild) {
+      } else {
         targetNode = 'PC-B';
       }
 

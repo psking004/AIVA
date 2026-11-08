@@ -58,6 +58,8 @@ export default function MobileHomeScreen() {
   const textInputRef = useRef<string>('');
   const isProcessingRef = useRef<boolean>(false);
   const lastProcessedCommandRef = useRef<{ text: string; timestamp: number }>({ text: '', timestamp: 0 });
+  const speakingStartTimeRef = useRef<number>(0);
+  const speakingEndTimeRef = useRef<number>(0);
 
   useEffect(() => {
     activeOverlayRef.current = activeOverlay;
@@ -141,14 +143,16 @@ export default function MobileHomeScreen() {
     async (text: string): Promise<void> => {
       clearTimers();
       setPresenceState('ACTIVE');
+      speakingStartTimeRef.current = Date.now();
       try {
         const ttsPromise = aivaVoiceService.speak(text);
-        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 15000));
+        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 20000));
         await Promise.race([ttsPromise, timeoutPromise]);
       } catch (err) {
         console.error('[AIVA Voice Error]', err);
         console.warn('[AIVA Mobile] TTS speak error:', err);
       } finally {
+        speakingEndTimeRef.current = Date.now();
         if (voiceStateRef.current !== 'LISTENING') {
           setFaceState('IDLE');
           scheduleDormancy(4000);
@@ -276,29 +280,46 @@ export default function MobileHomeScreen() {
   );
 
   // Wake presence into ACTIVE on "AIVA" and immediately start STT
-  const wakeAivaPresence = useCallback(async () => {
-    clearTimers();
-    setPresenceState('ACTIVE');
-    setFaceState('LISTENING');
-    setLastResponseText(null);
+  const wakeAivaPresence = useCallback(
+    async (isTouchTrigger = false) => {
+      // If speaking, check barge-in conditions
+      if (voiceStateRef.current === 'SPEAKING') {
+        const elapsed = Date.now() - speakingStartTimeRef.current;
+        if (isTouchTrigger) {
+          // Ignore accidental touches within the first 1200ms of speech starting
+          if (elapsed < 1200) {
+            console.log(`[AIVA Barge-In] Ignored touch during initial speech grace period (${elapsed}ms < 1200ms)`);
+            return;
+          }
+          console.log('[AIVA Barge-In] User touched screen during speech: halting.');
+        } else {
+          // Ignore wake-word trigger during active speech
+          console.log('[AIVA Barge-In] Ignored wake-word trigger during active speech.');
+          return;
+        }
 
-    // If speaking, tap/wake acts as instant barge-in
-    if (voiceStateRef.current === 'SPEAKING') {
-      console.log('[AIVA Barge-In] Screen touched while speaking: halting speech.');
-      await aivaVoiceService.stopSpeaking();
-      aivaVoiceService.setState('IDLE');
-      setFaceState('IDLE');
-      scheduleDormancy(2500);
-      return;
-    }
+        await aivaVoiceService.stopSpeaking();
+        speakingEndTimeRef.current = Date.now();
+        aivaVoiceService.setState('IDLE');
+        setFaceState('IDLE');
+        scheduleDormancy(2500);
+        return;
+      }
 
-    try {
-      console.log('[AIVA Voice] Prompting user speech recognition...');
-      await aivaVoiceService.startListening();
-    } catch (e: any) {
-      console.warn('[AIVA Voice] startListening error:', e.message);
-    }
-  }, [clearTimers, scheduleDormancy]);
+      clearTimers();
+      setPresenceState('ACTIVE');
+      setFaceState('LISTENING');
+      setLastResponseText(null);
+
+      try {
+        console.log('[AIVA Voice] Prompting user speech recognition...');
+        await aivaVoiceService.startListening();
+      } catch (e: any) {
+        console.warn('[AIVA Voice] startListening error:', e.message);
+      }
+    },
+    [clearTimers, scheduleDormancy]
+  );
 
   // Sync native voice service events
   useEffect(() => {
@@ -312,19 +333,24 @@ export default function MobileHomeScreen() {
       } else if (state === 'PROCESSING') {
         setFaceState('THINKING');
       } else if (state === 'SPEAKING') {
+        speakingStartTimeRef.current = Date.now();
         setFaceState('SPEAKING');
       } else if (state === 'INTERRUPTED') {
+        speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
       } else if (state === 'ERROR') {
+        speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
         scheduleDormancy(3000);
       } else if (state === 'DORMANT') {
+        speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setPresenceState('DORMANT');
         setFaceState('IDLE');
       } else if (state === 'IDLE') {
+        speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
         scheduleDormancy(6000);
@@ -368,7 +394,12 @@ export default function MobileHomeScreen() {
     const unsubscribe = wakeWordService.subscribe((state, event) => {
       if (state === 'WAKE_WORD_DETECTED') {
         console.log('[EVIDENCE-1] Wake-word detection: AIVA detected with confidence:', event?.confidence ?? 0.85);
-        wakeAivaPresence();
+        // Ignore wake-word self-trigger during active speech or within 800ms acoustic settling window
+        if (voiceStateRef.current === 'SPEAKING' || Date.now() - speakingEndTimeRef.current < 800) {
+          console.log('[WakeWord] Ignored wake-word self-trigger during active TTS or settling window');
+          return;
+        }
+        wakeAivaPresence(false);
       } else if (state === 'IDLE' && voiceStateRef.current === 'IDLE' && !textInputRef.current.trim().length && !showTypingFallback) {
         scheduleDormancy(5000);
       }
@@ -397,7 +428,7 @@ export default function MobileHomeScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#060709" />
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       {/* 1. Subtle Clock (Top-Right) */}
       <View style={styles.topBar}>
@@ -409,7 +440,7 @@ export default function MobileHomeScreen() {
       {/* 2. Central Floating Holographic AI Face (Dominant Screen Element) */}
       <TouchableOpacity
         activeOpacity={0.9}
-        onPress={wakeAivaPresence}
+        onPress={() => wakeAivaPresence(true)}
         style={styles.faceCenterContainer}
       >
         <AivaMobileFace
@@ -435,7 +466,7 @@ export default function MobileHomeScreen() {
       {/* 4. Bottom Controls: Minimal Dormant Hint OR Typing Fallback */}
       {isDormant ? (
         <TouchableOpacity
-          onPress={wakeAivaPresence}
+          onPress={() => wakeAivaPresence(true)}
           style={styles.dormantTouchHint}
         >
           <Text style={styles.touchHintText}>Say "AIVA" or tap to wake</Text>
