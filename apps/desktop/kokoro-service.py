@@ -267,7 +267,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     except Exception as e:
                         res_data = {"success": False, "node": "PC-B", "error": str(e), "spokenResponse": f"Failed to launch {app_target} on PC-B: {str(e)}"}
             # Route for PC-A target
-            if "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():
+            elif "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():
                 import socket
                 pca_ip = "10.84.73.194"
                 ollama_up = False
