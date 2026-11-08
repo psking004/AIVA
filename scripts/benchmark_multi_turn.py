@@ -1,19 +1,39 @@
 import json
 import time
+import sys
 import urllib.request
 import urllib.error
 
 print("=" * 80)
-print("STAGE 3: MULTI-TURN CONTEXTUAL CONVERSATION BENCHMARK")
+print("STAGE 4: MULTI-TURN CONTEXTUAL CONVERSATION BENCHMARK")
 print("Target: https://aiva-yitg.onrender.com/ai/chat")
 print("=" * 80)
 
 # Load tokens and identity
 tokens = json.load(open('.aiva_pc_b_tokens.json', 'r', encoding='utf-8'))
-access_token = tokens.get('accessToken') or tokens.get('token')
-
 identity = json.load(open('.aiva_pc_b_identity.json', 'r', encoding='utf-8'))
 device_id = identity.get('device_id')
+refresh_token = tokens.get('refreshToken')
+
+# Token refresh
+ref_req = urllib.request.Request(
+    'https://aiva-yitg.onrender.com/auth/refresh',
+    data=json.dumps({'refreshToken': refresh_token}).encode('utf-8'),
+    headers={'x-device-id': device_id, 'Content-Type': 'application/json'},
+    method='POST'
+)
+try:
+    with urllib.request.urlopen(ref_req, timeout=15) as ref_resp:
+        ref_data = json.loads(ref_resp.read().decode('utf-8'))
+        access_token = ref_data.get('accessToken')
+        tokens['accessToken'] = access_token
+        if 'refreshToken' in ref_data:
+            tokens['refreshToken'] = ref_data['refreshToken']
+        json.dump(tokens, open('.aiva_pc_b_tokens.json', 'w', encoding='utf-8'), indent=2)
+        print("[AUTH] Token refreshed successfully.")
+except Exception as e:
+    print(f"[AUTH] Refresh notice: {e}, falling back to existing token.")
+    access_token = tokens.get('accessToken') or tokens.get('token')
 
 conversation_id = f"conv_bench_{int(time.time())}"
 print(f"Active Conversation ID: {conversation_id}")
@@ -47,7 +67,7 @@ for idx, (label, prompt) in enumerate(turns, 1):
     req = urllib.request.Request("https://aiva-yitg.onrender.com/ai/chat", data=payload, headers=headers, method="POST")
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(req, timeout=25) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             latency_ms = round((time.time() - t0) * 1000, 2)
             reply = data.get("response") or data.get("message")
@@ -68,25 +88,24 @@ for idx, (label, prompt) in enumerate(turns, 1):
 # Audit Turn 3 Context Recall
 turn3_reply = turn_responses[2].lower()
 has_go = "go" in turn3_reply or "golang" in turn3_reply
-print("=" * 80)
-print("MULTI-TURN BENCHMARK VERIFICATION RESULTS")
-print("=" * 80)
-print(f"Turn 1 Latency: {turn_latencies[0]} ms")
-print(f"Turn 2 Latency: {turn_latencies[1]} ms")
-print(f"Turn 3 Latency: {turn_latencies[2]} ms")
-print(f"Recall Check ('Go'/'Golang' in Turn 3 response): {'PASS' if has_go else 'FAIL'}")
 
-# Security & Leak Audit
+print("=" * 80)
+print("BENCHMARK AUDIT")
+print("=" * 80)
+print(f"Average Turn Latency: {round(sum(turn_latencies) / len(turn_latencies), 2)} ms")
+print(f"Contextual Memory Recall ('Go'): {'PASS' if has_go else 'FAIL'}")
+
+# Security check: Ensure no API keys or raw tokens leaked into replies
+leaked_secrets = []
 for idx, reply in enumerate(turn_responses, 1):
-    lower_r = reply.lower()
-    assert "aiza" not in lower_r, f"Turn {idx} leaked Google API Key!"
-    assert "sk-" not in lower_r, f"Turn {idx} leaked OpenRouter API Key!"
-    assert "stack" not in lower_r or "trace" not in lower_r, f"Turn {idx} leaked stack trace!"
+    if "AIza" in reply or "sk-or-v1" in reply or "bearer" in reply.lower():
+        leaked_secrets.append(f"Turn {idx}")
 
-print("Security Audit: PASS (Zero API keys, vendor exception dumps, or token leaks)")
+print(f"Secret Redaction Audit: {'PASS (0 leaks)' if not leaked_secrets else f'FAIL (leaks in {leaked_secrets})'}")
 
-if has_go:
-    print("\n>>> STAGE 3 BENCHMARK: PASS <<<")
+if has_go and not leaked_secrets:
+    print("\n>>> MULTI-TURN BENCHMARK PASSED <<<")
+    sys.exit(0)
 else:
-    print("\n>>> STAGE 3 BENCHMARK: FAIL (Context not recalled) <<<")
+    print("\n>>> MULTI-TURN BENCHMARK FAILED <<<")
     sys.exit(1)

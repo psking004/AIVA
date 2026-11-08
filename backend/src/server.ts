@@ -132,6 +132,12 @@ async function bootstrap() {
   const defaultHost = nodeMode === 'peer' ? '0.0.0.0' : '127.0.0.1';
   const host = configService.get<string>('HOST', defaultHost);
 
+  if (process.argv.includes('--test-boot')) {
+    logger.log(`AIVA Server boot test successful. All modules initialized. [Node Mode: ${nodeMode.toUpperCase()}]`);
+    await app.close();
+    process.exit(0);
+  }
+
   await app.listen(port, host);
 
   logger.log(`AIVA Server listening on ${host}:${port} [Node Mode: ${nodeMode.toUpperCase()}]`);
