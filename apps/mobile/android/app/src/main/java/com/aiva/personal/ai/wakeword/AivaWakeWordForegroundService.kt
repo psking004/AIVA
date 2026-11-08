@@ -32,10 +32,30 @@ class AivaWakeWordForegroundService : Service() {
 
         const val ACTION_START = "com.aiva.action.START_WAKEWORD"
         const val ACTION_STOP = "com.aiva.action.STOP_WAKEWORD"
+        const val ACTION_PAUSE = "com.aiva.action.PAUSE_WAKEWORD"
+        const val ACTION_RESUME = "com.aiva.action.RESUME_WAKEWORD"
         const val ACTION_SET_MODE = "com.aiva.action.SET_BATTERY_MODE"
         const val BROADCAST_WAKE_WORD_DETECTED = "com.aiva.broadcast.WAKE_WORD_DETECTED"
         const val EXTRA_BATTERY_MODE = "extra_battery_mode"
         const val EXTRA_CONFIDENCE = "extra_confidence"
+
+        @Volatile
+        private var instance: AivaWakeWordForegroundService? = null
+
+        fun pauseListening() {
+            instance?.stopListening()
+        }
+
+        fun resumeListening() {
+            val s = instance
+            if (s != null && s.batteryManager.getMode() != BatteryMode.ULTRA_LOW_POWER) {
+                s.startListening()
+            }
+        }
+
+        fun resetDetectionDebounce() {
+            instance?.detector?.resetDebounce()
+        }
     }
 
     private var isRunning = false
@@ -46,6 +66,7 @@ class AivaWakeWordForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
 
         detector = TwoStageWakeWordDetector { confidence ->
@@ -56,9 +77,15 @@ class AivaWakeWordForegroundService : Service() {
             detector.setMuted(!isListeningAllowed)
             updateNotification(mode, isListeningAllowed)
         }
+
+        // Immediately promote to foreground to guarantee Android Foreground Service contract
+        startForegroundServiceWithNotification(batteryManager.getMode())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Guarantee startForeground is called for every startForegroundService invocation
+        startForegroundServiceWithNotification(batteryManager.getMode())
+
         when (intent?.action) {
             ACTION_START -> {
                 val modeStr = intent.getStringExtra(EXTRA_BATTERY_MODE)
@@ -66,7 +93,6 @@ class AivaWakeWordForegroundService : Service() {
                     try { BatteryMode.valueOf(it) } catch (e: Exception) { BatteryMode.BALANCED }
                 } ?: BatteryMode.BALANCED
 
-                startForegroundServiceWithNotification(mode)
                 batteryManager.setMode(mode)
                 startListening()
             }
@@ -74,6 +100,14 @@ class AivaWakeWordForegroundService : Service() {
                 stopListening()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
+            }
+            ACTION_PAUSE -> {
+                stopListening()
+            }
+            ACTION_RESUME -> {
+                if (batteryManager.getMode() != BatteryMode.ULTRA_LOW_POWER) {
+                    startListening()
+                }
             }
             ACTION_SET_MODE -> {
                 val modeStr = intent.getStringExtra(EXTRA_BATTERY_MODE)
@@ -84,6 +118,11 @@ class AivaWakeWordForegroundService : Service() {
                     } catch (e: Exception) {
                         Log.w(TAG, "Invalid battery mode: $it")
                     }
+                }
+            }
+            else -> {
+                if (batteryManager.getMode() != BatteryMode.ULTRA_LOW_POWER) {
+                    startListening()
                 }
             }
         }
@@ -116,6 +155,7 @@ class AivaWakeWordForegroundService : Service() {
     private fun startListening() {
         if (isRunning) return
         isRunning = true
+        detector.reset()
 
         val bufferSize = AudioRecord.getMinBufferSize(
             TwoStageWakeWordDetector.SAMPLE_RATE,
@@ -167,6 +207,7 @@ class AivaWakeWordForegroundService : Service() {
     private fun stopListening() {
         isRunning = false
         try {
+            detector.reset()
             audioRecord?.stop()
             audioRecord?.release()
             audioRecord = null
@@ -230,6 +271,9 @@ class AivaWakeWordForegroundService : Service() {
     override fun onDestroy() {
         stopListening()
         batteryManager.unregister()
+        if (instance === this) {
+            instance = null
+        }
         super.onDestroy()
     }
 

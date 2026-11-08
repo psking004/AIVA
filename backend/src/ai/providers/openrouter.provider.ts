@@ -57,6 +57,15 @@ export class OpenRouterProvider implements AIProvider {
     };
   }
 
+  private resolveModel(model?: string): string {
+    if (!model) return this.defaultModel;
+    // Fall back to defaultModel if a Gemini or local Ollama model ID was passed in options
+    if (model.startsWith('gemini') || model.startsWith('models/gemini') || model.includes(':')) {
+      return this.defaultModel;
+    }
+    return model;
+  }
+
   /**
    * Chat completion via OpenRouter API
    */
@@ -70,7 +79,7 @@ export class OpenRouterProvider implements AIProvider {
       );
     }
 
-    const model = this.defaultModel;
+    const model = this.resolveModel(options?.model);
     const timeout = options?.timeoutMs || this.timeoutMs;
     const url = `${this.baseUrl}/chat/completions`;
 
@@ -98,7 +107,7 @@ export class OpenRouterProvider implements AIProvider {
         return { role: m.role, content: m.content };
       }),
       temperature: options?.temperature ?? 0.7,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: Math.min(options?.maxTokens ?? 2048, 2048),
       top_p: options?.topP ?? 0.9,
       stream: false,
     };
@@ -181,7 +190,7 @@ export class OpenRouterProvider implements AIProvider {
       );
     }
 
-    const model = this.defaultModel;
+    const model = this.resolveModel(options?.model);
     const timeout = options?.timeoutMs || this.timeoutMs;
     const url = `${this.baseUrl}/chat/completions`;
 
@@ -192,7 +201,7 @@ export class OpenRouterProvider implements AIProvider {
         content: m.content,
       })),
       temperature: options?.temperature ?? 0.7,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: Math.min(options?.maxTokens ?? 2048, 2048),
       stream: true,
     };
 

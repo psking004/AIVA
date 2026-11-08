@@ -44,11 +44,18 @@ except ImportError as e:
     emit({"type": "error", "message": f"Missing dependency: {str(e)}"})
     sys.exit(1)
 
+import argparse
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--warmup", action="store_true")
+parser.add_argument("--model", type=str, default="base.en")
+parsed_args, _ = parser.parse_known_args()
+
 # Hardware selection: RTX 3050 CUDA if available, CPU fallback
 cuda_count = ctranslate2.get_cuda_device_count()
 device = "cuda" if cuda_count > 0 else "cpu"
 compute_type = "float16" if device == "cuda" else "int8"
-model_name = "base.en"
+model_name = parsed_args.model
 
 log(f"[AIVA WHISPER] model: {model_name}")
 log(f"[AIVA WHISPER] device: {device}")
@@ -56,24 +63,36 @@ log(f"[AIVA WHISPER] compute: {compute_type}")
 
 t_start = time.time()
 try:
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    model = WhisperModel(model_name, device=device, compute_type=compute_type, cpu_threads=8)
     load_time = round(time.time() - t_start, 2)
     log(f"[AIVA STT] Whisper '{model_name}' loaded successfully in {load_time}s on {device.upper()}")
 except Exception as e:
     log(f"[AIVA STT] Failed to load on {device}, falling back to CPU int8: {e}")
     device = "cpu"
     compute_type = "int8"
-    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    model = WhisperModel(model_name, device="cpu", compute_type="int8", cpu_threads=8)
     log(f"[AIVA STT] Whisper '{model_name}' loaded successfully on CPU fallback")
 
 # Warmup Whisper engine to eliminate first-run cold latency (Requirement 5)
 try:
     log("[AIVA STT] Warming up Whisper engine with dummy audio...")
     warmup_audio = np.zeros(8000, dtype=np.float32)
-    list(model.transcribe(warmup_audio, beam_size=1, language="en", vad_filter=False)[0])
+    list(model.transcribe(warmup_audio, beam_size=1, language="en", vad_filter=False, without_timestamps=True)[0])
     log("[AIVA STT] Whisper engine warmup completed.")
 except Exception as w_err:
     log(f"[AIVA STT] Warmup notice: {w_err}")
+
+if parsed_args.warmup:
+    log(f"[AIVA STT] Running synthetic benchmark on {model_name}...")
+    t_bench = time.time()
+    # 2.0 seconds audio buffer
+    bench_audio = np.zeros(32000, dtype=np.float32)
+    segments, _ = model.transcribe(bench_audio, beam_size=1, language="en", vad_filter=False, without_timestamps=True)
+    list(segments)
+    latency_ms = round((time.time() - t_bench) * 1000, 2)
+    log(f"[WHISPER BENCHMARK] Model: {model_name} | Device: {device} | Latency: {latency_ms} ms (Target: < 1800 ms)")
+    print(f"BENCHMARK_SUCCESS: model={model_name} device={device} latency={latency_ms}ms")
+    sys.exit(0)
 
 # PART 2 — ENUMERATE AND TEST ALL AVAILABLE INPUT DEVICES
 log("=== ENUMERATING AVAILABLE AUDIO INPUT DEVICES ===")
@@ -136,7 +155,7 @@ HARDWARE_RATE = 48000 if use_wasapi_48k else 16000
 BLOCK_SIZE = 3072 if use_wasapi_48k else 1024 # 64ms per block (at 48kHz: 3072, at 16kHz: 1024)
 OUTPUT_BLOCK_SIZE = 1024 # Always exactly 1024 samples (64ms at 16kHz) for Whisper & VAD
 
-RING_BUFFER_DURATION = 0.20  # 200ms pre-roll to capture speech onset completely (Requirement 2: 200-300ms)
+RING_BUFFER_DURATION = 0.35  # 350ms pre-roll to capture speech onset completely
 MAX_RING_BLOCKS = max(1, int((SAMPLE_RATE * RING_BUFFER_DURATION) / OUTPUT_BLOCK_SIZE))
 
 log(
@@ -164,9 +183,9 @@ speech_detected_ms = 0
 speech_start_time = 0.0
 last_speech_time = 0.0
 record_start_time = 0.0
-max_record_duration = 3.0   # 3.0s normal fast command ceiling (Requirement 1)
-silence_timeout = 0.38       # 380ms continuous trailing silence before ending command (Requirement 1: 350-600ms)
-min_speech_duration = 0.30   # 300ms minimum speech duration before allowing silence cutoff
+max_record_duration = 5.0   # 5.0s default command recording ceiling
+silence_timeout = 0.40       # 400ms continuous trailing silence before ending command (ultra-low-latency)
+min_speech_duration = 0.25   # 250ms minimum speech duration before allowing silence cutoff
 speech_frames_count = 0
 smoothed_rms = 0.0010
 
@@ -276,9 +295,9 @@ def audio_processor_loop():
                     speech_streak = 0
 
                 elapsed = time.time() - record_start_time
-                # If no speech detected within 2.0s after wake trigger, stop (Requirement 1)
-                if elapsed >= 2.0:
-                    log("[AIVA VAD] speech_started=False (timeout after 2.0s)")
+                # If no speech detected within 4.5s after wake trigger, stop
+                if elapsed >= 4.5:
+                    log("[AIVA VAD] speech_started=False (timeout after 4.5s)")
                     record_event.set()
             else:
                 recorded_blocks.append(block)
@@ -381,10 +400,14 @@ def record_and_transcribe_worker(session_max_duration=3.0):
             f"end_threshold={frozen_end_threshold:.6f}"
         )
 
-        # Initialize recording buffers (pre-roll will be grabbed upon speech onset)
+        # Initialize recording buffers (clear past audio ring/queue so wake-word audio is flushed)
+        audio_raw_queue.clear()
+        audio_ring.clear()
         recorded_blocks = []
         pre_roll_duration = 0.0
         has_spoken = False
+        speech_streak = 0
+        speech_frames_count = 0
         speech_detected_ms = 0
         speech_start_time = 0.0
         last_speech_time = time.time()
@@ -398,8 +421,8 @@ def record_and_transcribe_worker(session_max_duration=3.0):
         # Wait until speech ends or timeout
         record_event.wait(timeout=max_record_duration + 0.5)
 
-        # Post-roll buffer capture: preserve ~180ms after speech ends (Requirement 3: 150-250ms)
-        post_roll_duration = 0.18 if has_spoken else 0.0
+        # Post-roll buffer capture: preserve ~80ms after speech ends (fast cutoff)
+        post_roll_duration = 0.08 if has_spoken else 0.0
         if post_roll_duration > 0:
             time.sleep(post_roll_duration)
         is_recording = False
@@ -575,6 +598,18 @@ def record_and_transcribe_worker(session_max_duration=3.0):
             raw_text = " ".join(text_list).strip()
             latency = round(time.time() - t0, 3)
             whisper_completed_ms = int(time.time() * 1000)
+
+            # Filter out standalone wake-word transcripts so they never overwrite command
+            clean_text = raw_text.strip().rstrip('.?!,').lower()
+            if not clean_text or clean_text in ('aiva', 'hey aiva', 'okay aiva', 'ok aiva', 'hi aiva', 'hello aiva', 'ava', 'hey ava'):
+                log(f"[AIVA STT] Filtered out duplicate wake-word transcript: '{raw_text}'")
+                emit({
+                    "type": "no_speech",
+                    "duration": round(len(audio_data) / SAMPLE_RATE, 2),
+                    "hasSpoken": False,
+                    "reason": "wake_word_only"
+                })
+                return
 
             # PART 13 — LOG AIVA WHISPER
             log(

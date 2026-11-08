@@ -32,6 +32,8 @@ class TwoStageWakeWordDetector(
     private val windowBuffer = ShortArray(FRAME_SIZE * 16) // ~500ms audio buffer
     private var windowIndex = 0
 
+    private var lastDetectionTime = 0L
+
     fun setSensitivity(value: Float) {
         sensitivity = value.coerceIn(0.1f, 1.0f)
     }
@@ -61,11 +63,19 @@ class TwoStageWakeWordDetector(
         if (windowIndex >= windowBuffer.size) {
             windowIndex = 0 // Wrap around
 
+            val now = System.currentTimeMillis()
+            if (now - lastDetectionTime < 3000L) {
+                // Debounce detections: avoid looping triggers
+                return
+            }
+
             // ── STAGE 2: Local Keyword Spotting for "AIVA" ──────────
             val confidence = evaluateKeywordConfidence(windowBuffer)
 
             if (confidence >= WAKE_CONFIDENCE_THRESHOLD * sensitivity) {
+                lastDetectionTime = now
                 Log.i(TAG, "Wake word 'AIVA' detected with confidence: $confidence")
+                reset()
                 onWakeWordDetected(confidence)
             }
         }
@@ -90,27 +100,38 @@ class TwoStageWakeWordDetector(
     private fun evaluateKeywordConfidence(buffer: ShortArray): Float {
         var zeroCrossings = 0
         var totalEnergy = 0.0
+        var maxAmplitude = 0
 
         for (i in 1 until buffer.size) {
+            val absVal = Math.abs(buffer[i].toInt())
+            if (absVal > maxAmplitude) {
+                maxAmplitude = absVal
+            }
             if ((buffer[i] >= 0 && buffer[i - 1] < 0) || (buffer[i] < 0 && buffer[i - 1] >= 0)) {
                 zeroCrossings++
             }
-            totalEnergy += Math.abs(buffer[i].toInt())
+            totalEnergy += absVal
         }
 
         val zcr = zeroCrossings.toFloat() / buffer.size
         val avgAmplitude = totalEnergy / buffer.size
 
         // Keyword spectral signature matching for phonemes in "AIVA"
-        val zcrMatch = (zcr in 0.08f..0.28f)
-        val amplitudeMatch = (avgAmplitude in 500.0..18000.0)
+        // Require meaningful dynamic range (crest factor) rather than flat background noise
+        val crestFactor = if (avgAmplitude > 0) maxAmplitude / avgAmplitude else 0.0
+        val zcrMatch = (zcr in 0.09f..0.26f)
+        val amplitudeMatch = (avgAmplitude in 1200.0..18000.0) && (crestFactor > 2.2)
 
         if (zcrMatch && amplitudeMatch) {
-            val normalizedScore = (0.75 + (avgAmplitude / 25000.0).coerceAtMost(0.20)).toFloat()
+            val normalizedScore = (0.76 + (avgAmplitude / 25000.0).coerceAtMost(0.20)).toFloat()
             return normalizedScore
         }
 
         return 0.0f
+    }
+
+    fun resetDebounce() {
+        lastDetectionTime = 0L
     }
 
     fun reset() {

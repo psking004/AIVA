@@ -82,31 +82,19 @@ export class MemoryOrchestrator {
     const longTermResults = await this.longTermMemory.query(userId, userInput, 3);
     this.logger.debug(`Long-term: ${longTermResults.length} relevant memories found`);
 
-    // ── Step 4: Build context block ────────────────────────────────
-    const contextParts: string[] = [];
-
-    if (sessionContext) {
-      contextParts.push(sessionContext);
-    }
-
-    if (longTermResults.length > 0) {
-      contextParts.push(this.longTermMemory.formatForPrompt(longTermResults));
-    }
-
-    const contextBlock = contextParts.join('\n\n');
-
-    // ── Step 5: Assemble prompt ────────────────────────────────────
-    const systemPrompt = buildPersonalizedPrompt(userName, preferences);
+    // ── Step 4: Build context block & personalized system prompt ────
+    const longTermContext = longTermResults.length > 0 ? this.longTermMemory.formatForPrompt(longTermResults) : undefined;
+    const systemPrompt = buildPersonalizedPrompt(userName, preferences, longTermContext);
 
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
     ];
 
-    // Add context if available
-    if (contextBlock) {
+    // Add session context if available
+    if (sessionContext) {
       messages.push({
         role: 'system',
-        content: `Relevant context:\n${contextBlock}`,
+        content: `Relevant session context:\n${sessionContext}`,
       });
     }
 

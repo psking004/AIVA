@@ -18,6 +18,8 @@ import { MemoryOrchestrator } from './memory/memory-orchestrator.service';
 import { AgentOrchestrator, AgentType } from './agents/orchestrator';
 import { ToolRegistry } from './tools/registry';
 import { IntentClassifier, ClassifiedIntent } from './tools/intent.classifier';
+import { IntelligenceKernel } from './kernel/intelligence-kernel';
+import { FastPathEngine } from './kernel/fast-path.engine';
 import { AIVA_SYSTEM_PROMPT } from './personality/aiva-personality';
 import { ModelRouterService } from './router/model-router.service';
 import { ComputeSchedulerService } from './nodes/compute-scheduler.service';
@@ -50,9 +52,10 @@ export class AIVAService {
     private modelRouter: ModelRouterService,
     private computeScheduler: ComputeSchedulerService,
     private fabricDispatch: FabricDispatchService,
-
+    private intelligenceKernel: IntelligenceKernel,
+    private fastPathEngine: FastPathEngine,
   ) {
-    this.logger.log('AIVA Core Service initialized with Model Router orchestration');
+    this.logger.log('AIVA Core Service initialized with Model Router, Intelligence Kernel & Fast Path');
   }
 
   /**
@@ -228,13 +231,15 @@ export class AIVAService {
     message: string,
     conversationId?: string,
     metadata?: {
-      requestId?: string;
-      authenticated?: boolean;
-      deviceAuthorized?: boolean;
-      route?: string;
-      mode?: string;
-      clientPlatform?: string;
-      sourceDeviceId?: string;
+      requestId?: string | undefined;
+      authenticated?: boolean | undefined;
+      deviceAuthorized?: boolean | undefined;
+      route?: string | undefined;
+      mode?: string | undefined;
+      provider?: string | undefined;
+      model?: string | undefined;
+      clientPlatform?: string | undefined;
+      sourceDeviceId?: string | undefined;
     },
   ): Promise<AIVAConversationResponse> {
     const startTime = Date.now();
@@ -249,6 +254,51 @@ export class AIVAService {
     );
 
     try {
+      // 0. Ultra-Low-Latency Fast Path Engine (Section 2 - Zero LLM, <10ms resolution)
+      const fastPathResult = this.fastPathEngine.evaluate(message, {
+        selectedProvider: metadata?.provider,
+        selectedModel: metadata?.model,
+      });
+
+      if (fastPathResult && fastPathResult.handled) {
+        trace.route = 'FAST_PATH';
+        trace.tool_selected = fastPathResult.toolCalled;
+        trace.tool_execution = 'executed';
+        trace.total_latency = Date.now() - startTime;
+        trace.final_response_generated = true;
+        this.logger.log(`[FAST PATH] ${fastPathResult.diagnostics}`);
+
+        // Asynchronously persist turn to memory in background without blocking instant response!
+        setImmediate(async () => {
+          try {
+            await this.memoryOrchestrator.writeBack({
+              type: 'user_turn',
+              userId,
+              content: message,
+            });
+            await this.memoryOrchestrator.writeBack({
+              type: 'assistant_turn',
+              userId,
+              content: fastPathResult.response,
+            });
+          } catch (_) {}
+        });
+
+        return {
+          conversationId: conversationId || 'conv_default',
+          response: fastPathResult.response,
+          agentType: 'none',
+          toolCalls: [{ name: fastPathResult.toolCalled, args: {} }],
+          context: {
+            messages: [{ role: 'user', content: message }, { role: 'assistant', content: fastPathResult.response }],
+            metadata: { fastPath: true, latencyMs: fastPathResult.latencyMs },
+          },
+          model: 'NONE (Fast Path)',
+          provider: 'local',
+          target: fastPathResult.target,
+        };
+      }
+
       // 1. Write user turn to memory layers
       trace.failure_stage = 'memory_write_user_turn';
       try {
@@ -265,31 +315,73 @@ export class AIVAService {
       trace.failure_stage = 'memory_get_context';
       const context = await this.memoryService.getConversationContext(userId, conversationId);
 
-      // 3. Classify intent
+      // 3. Classify intent via Intelligence Kernel
       trace.failure_stage = 'intent_classification';
-      const intent = await this.intentClassifier.classify(message, context);
-      trace.messageCategory = intent.type || 'general';
+      const kernelClass = this.intelligenceKernel.classify(message);
+      trace.messageCategory = kernelClass.intent;
+      this.logger.debug(
+        `[KERNEL] intent=${kernelClass.intent} category=${kernelClass.category} conf=${kernelClass.confidence}`,
+      );
 
-      this.logger.debug(`Classified intent: ${intent.type}, confidence: ${intent.confidence}`);
+      // Check for direct deterministic capability execution (TIME, DATE, WEATHER, WEB_SEARCH, NEWS)
+      const capabilityResult = await this.intelligenceKernel.executeCapability(
+        kernelClass,
+        metadata?.provider,
+        metadata?.model,
+      );
 
-      // 4. Route to agent or handle directly
       let response: AIVAConversationResponse;
 
-      if (intent.requiresAgent) {
-        trace.tool_selected = intent.agentType || 'none';
-        trace.failure_stage = `agent_${intent.agentType}`;
-        response = await this.handleAgentRouting(userId, message, intent, context, trace);
+      if (capabilityResult && capabilityResult.handledDirectly) {
+        trace.tool_selected = capabilityResult.toolCalled || 'kernel_capability';
+        trace.tool_execution = 'executed';
+        this.logger.log(`[KERNEL] Handled directly by capability: ${capabilityResult.toolCalled}`);
+        response = {
+          conversationId: conversationId || 'conv_default',
+          response: capabilityResult.response || '',
+          agentType: 'none',
+          toolCalls: capabilityResult.toolCalled
+            ? [{ name: capabilityResult.toolCalled, args: kernelClass.parameters }]
+            : [],
+          context,
+        };
+      } else if (
+        kernelClass.requiresAgent &&
+        (kernelClass.toolName === 'codingAgent' ||
+          /PROJECT_INSPECTION|CODE_DEBUG|CODE_TEST|PROJECT_BUILD|CODE_EDIT|PROJECT_SCAFFOLD|SECURITY_BLOCKED/.test(kernelClass.intent))
+      ) {
+        trace.tool_selected = 'coding';
+        trace.failure_stage = 'agent_coding';
+        const codingIntent: ClassifiedIntent = {
+          type: 'coding',
+          confidence: kernelClass.confidence,
+          parameters: kernelClass.parameters,
+          requiresAgent: true,
+          agentType: 'coding',
+        };
+        response = await this.handleAgentRouting(userId, message, codingIntent, context, trace);
         trace.tool_execution = response.toolCalls?.length > 0 ? 'executed' : 'completed';
       } else {
-        trace.failure_stage = 'direct_model_inference';
-        response = await this.handleDirectResponse(
-          userId,
-          message,
-          trace,
-          metadata?.clientPlatform,
-          metadata?.mode,
-          metadata?.sourceDeviceId,
-        );
+        // Fallback to legacy intent classifier & agents
+        const intent = await this.intentClassifier.classify(message, context);
+        if (intent.requiresAgent) {
+          trace.tool_selected = intent.agentType || 'none';
+          trace.failure_stage = `agent_${intent.agentType}`;
+          response = await this.handleAgentRouting(userId, message, intent, context, trace);
+          trace.tool_execution = response.toolCalls?.length > 0 ? 'executed' : 'completed';
+        } else {
+          trace.failure_stage = 'direct_model_inference';
+          response = await this.handleDirectResponse(
+            userId,
+            message,
+            trace,
+            metadata?.clientPlatform,
+            metadata?.mode,
+            metadata?.sourceDeviceId,
+            metadata?.provider,
+            metadata?.model,
+          );
+        }
       }
 
       // 5. Write assistant turn to memory layers
@@ -413,6 +505,8 @@ export class AIVAService {
     clientPlatform?: string,
     mode?: string,
     sourceDeviceId?: string,
+    provider?: string,
+    model?: string,
   ): Promise<AIVAConversationResponse> {
     // Build augmented prompt with all memory layers
     const augmentedPrompt = await this.memoryOrchestrator.buildPrompt(
@@ -426,6 +520,59 @@ export class AIVAService {
       content: m.content,
     }));
 
+    // Resolve provider & model
+    let resolvedProvider = provider;
+    if (!resolvedProvider) {
+      if (model?.startsWith('gemini')) {
+        resolvedProvider = 'gemini';
+      } else if (model && (model.includes('/') || model.includes('claude') || model.includes('llama-3.3'))) {
+        resolvedProvider = 'openrouter';
+      } else if (mode === 'gemini-only') {
+        resolvedProvider = 'gemini';
+      } else if (mode === 'openrouter-only') {
+        resolvedProvider = 'openrouter';
+      } else if (mode === 'local-only') {
+        resolvedProvider = 'ollama';
+      } else {
+        resolvedProvider = 'auto';
+      }
+    }
+
+    let resolvedModel = model;
+    if (!resolvedModel) {
+      if (resolvedProvider === 'gemini') {
+        resolvedModel = 'gemini-3.5-flash';
+      } else if (resolvedProvider === 'openrouter') {
+        resolvedModel = 'qwen/qwen-2.5-72b-instruct';
+      } else if (resolvedProvider === 'ollama') {
+        resolvedModel = 'qwen3:4b';
+      } else {
+        resolvedModel = 'qwen3:4b';
+      }
+    }
+
+    const executionTarget =
+      resolvedProvider === 'openrouter' ? 'openrouter-cloud' :
+      resolvedProvider === 'gemini' ? 'gemini-cloud' :
+      'local-ollama';
+
+    this.logger.log(`[MODEL] requested provider=${provider || 'none'}`);
+    this.logger.log(`[MODEL] requested model=${model || 'none'}`);
+    this.logger.log(`[MODEL] resolved provider=${resolvedProvider}`);
+    this.logger.log(`[MODEL] resolved model=${resolvedModel}`);
+    this.logger.log(`[MODEL] execution target=${executionTarget}`);
+    this.logger.log(`[MODEL] actual provider request=${resolvedModel}`);
+
+    // Prepend Structured Context to system prompt
+    const structuredCtx = this.intelligenceKernel.buildStructuredContext(resolvedProvider, resolvedModel);
+    const contextHeader = this.intelligenceKernel.formatSystemPromptHeader(structuredCtx);
+    const firstMsg = messages[0];
+    if (firstMsg && firstMsg.role === 'system') {
+      firstMsg.content = `${contextHeader}\n${firstMsg.content}`;
+    } else {
+      messages.unshift({ role: 'system', content: contextHeader });
+    }
+
     // Generate response via AIVA Model Router
     let response: {
       content: string;
@@ -436,40 +583,84 @@ export class AIVAService {
 
     const requestedMode = mode || 'default';
 
-    // Distributed fabric is authoritative for explicit local execution.
-    // For local-first/auto, use fabric when a local node is available,
-    // otherwise preserve the existing ModelRouter cloud fallback.
-    const shouldTryFabric =
-      requestedMode === 'local-first' ||
-      requestedMode === 'auto' ||
-      requestedMode === 'local-only';
+    // Cloud models go straight to model router without waiting for local fabric dispatch
+    if (resolvedProvider === 'openrouter' || resolvedProvider === 'gemini') {
+      const cloudStrategy = resolvedProvider === 'openrouter' ? 'openrouter-only' : 'gemini-only';
+      response = await this.modelRouter.chat(
+        messages,
+        {
+          temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
+          maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
+          clientPlatform,
+          strategy: cloudStrategy as any,
+          model: resolvedModel,
+        },
+        trace,
+      );
+    } else {
+      // Local execution via fabric or ModelRouter
+      const shouldTryFabric =
+        (requestedMode === 'local-first' ||
+        requestedMode === 'auto' ||
+        requestedMode === 'local-only') &&
+        (!provider || provider === 'ollama');
 
-    if (shouldTryFabric) {
-      try {
-        const fabricResponse = await this.executeFabricChat(
-          userId,
-          message,
-          {
-            ...(clientPlatform ? { clientPlatform } : {}),
-            mode: requestedMode,
-            sourceDeviceId: sourceDeviceId || `aiva-${userId}`,
-          },
-        );
+      if (shouldTryFabric) {
+        try {
+          const fabricResponse = await this.executeFabricChat(
+            userId,
+            message,
+            {
+              ...(clientPlatform ? { clientPlatform } : {}),
+              mode: requestedMode,
+              sourceDeviceId: sourceDeviceId || `aiva-${userId}`,
+            },
+          );
 
-        if (fabricResponse) {
-          response = fabricResponse;
-          if (trace) {
-            trace.provider_selected = response.provider;
-            trace.model_selected = response.model;
-            trace.provider_latency = response.latencyMs || 0;
-            trace.provider_response_valid = true;
-          }
-        } else {
-          if (requestedMode === 'local-only') {
-            throw new Error(
-              'LOCAL_ONLY requested but no local fabric node was available.',
+          if (fabricResponse) {
+            response = fabricResponse;
+            if (trace) {
+              trace.provider_selected = response.provider;
+              trace.model_selected = response.model;
+              trace.provider_latency = response.latencyMs || 0;
+              trace.provider_response_valid = true;
+            }
+          } else {
+            if (requestedMode === 'local-only') {
+              throw new Error(
+                'LOCAL_ONLY requested but no local fabric node was available.',
+              );
+            }
+
+            response = await this.modelRouter.chat(
+              messages,
+              {
+                temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
+                maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
+                clientPlatform,
+                strategy: mode as any,
+                model: resolvedModel,
+              },
+              trace,
             );
           }
+        } catch (fabricError: any) {
+          if (requestedMode === 'local-only') {
+            throw fabricError;
+          }
+
+          const isUnavailable = fabricError instanceof FabricNodeUnavailableError;
+          if (!isUnavailable) {
+            this.logger.error(
+              `[FABRIC ERROR] Execution failed on assigned node: ${fabricError?.message || fabricError}`,
+              fabricError?.stack,
+            );
+            throw fabricError;
+          }
+
+          this.logger.warn(
+            `[FABRIC UNAVAILABLE] Local nodes offline or unavailable; falling back to ModelRouter: ${fabricError?.message || fabricError}`,
+          );
 
           response = await this.modelRouter.chat(
             messages,
@@ -478,28 +669,12 @@ export class AIVAService {
               maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
               clientPlatform,
               strategy: mode as any,
+              model: resolvedModel,
             },
             trace,
           );
         }
-      } catch (fabricError: any) {
-        if (requestedMode === 'local-only') {
-          throw fabricError;
-        }
-
-        const isUnavailable = fabricError instanceof FabricNodeUnavailableError;
-        if (!isUnavailable) {
-          this.logger.error(
-            `[FABRIC ERROR] Execution failed on assigned node: ${fabricError?.message || fabricError}`,
-            fabricError?.stack,
-          );
-          throw fabricError;
-        }
-
-        this.logger.warn(
-          `[FABRIC UNAVAILABLE] Local nodes offline or unavailable; falling back to ModelRouter: ${fabricError?.message || fabricError}`,
-        );
-
+      } else {
         response = await this.modelRouter.chat(
           messages,
           {
@@ -507,21 +682,11 @@ export class AIVAService {
             maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
             clientPlatform,
             strategy: mode as any,
+            model: resolvedModel,
           },
           trace,
         );
       }
-    } else {
-      response = await this.modelRouter.chat(
-        messages,
-        {
-          temperature: parseFloat(this.configService.get('AI_TEMPERATURE', '0.7')),
-          maxTokens: parseInt(this.configService.get('AI_MAX_TOKENS', '4096')),
-          clientPlatform,
-          strategy: mode as any,
-        },
-        trace,
-      );
     }
 
     // Create conversation if needed

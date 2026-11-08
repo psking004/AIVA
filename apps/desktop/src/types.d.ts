@@ -1,3 +1,10 @@
+/// <reference types="vite/client" />
+
+declare module '*.png' {
+  const content: string;
+  export default content;
+}
+
 export interface FabricState {
   isOnline: boolean;
   backendUrl: string;
@@ -49,17 +56,37 @@ export interface IElectronAPI {
   onFabricUpdate: (callback: (state: FabricState) => void) => () => void;
   loginUser: (email: string, password: string) => Promise<{ success: boolean; user?: any; error?: string }>;
   reRegisterNode: () => Promise<{ success: boolean; isOnline: boolean }>;
-  sendChatMessage: (message: string, conversationId?: string) => Promise<{ success: boolean; data?: any; error?: string }>;
+  sendChatMessage: (message: string, conversationId?: string, turnId?: string) => Promise<{ success: boolean; data?: any; error?: string }>;
   testOllamaPing: () => Promise<{ online: boolean; models?: string[]; error?: string }>;
   getDiagnosticsLogs: () => Promise<string[]>;
   openLogFolder: () => Promise<void>;
   onLogEntry: (callback: (entry: any) => void) => () => void;
-  onVoiceTranscript?: (callback: (data: { text: string; confidence?: number; isFinal?: boolean; isWake?: boolean }) => void) => () => void;
-  onVoiceState?: (callback: (data: { state: string }) => void) => () => void;
+  speechWake?: () => Promise<{ status: string }>;
+  speechSttChunk?: (chunk: any) => Promise<{ queued: boolean; reason?: string }>;
+  speechTtsSpeak?: (text: string) => Promise<{ success: boolean; size?: number; buffer?: string; error?: string }>;
+  voiceBargeIn?: () => Promise<{ interrupted: boolean }>;
+  onWakeDetected?: (callback: (data: { type: string; keyword: string }) => void) => () => void;
+  startWakeListener?: () => Promise<{ active: boolean }>;
+  stopWakeListener?: () => Promise<{ active: boolean }>;
+  startWhisper?: () => Promise<{ active: boolean }>;
+  stopWhisper?: () => Promise<{ active: boolean }>;
+  startKokoro?: () => Promise<{ active: boolean }>;
+  stopKokoro?: () => Promise<{ active: boolean }>;
+  onVoiceTranscript?: (callback: (data: { turnId?: string; text: string; confidence?: number; isFinal?: boolean; isWake?: boolean }) => void) => () => void;
+  onVoiceState?: (callback: (data: { turnId?: string; state: string; interrupted?: boolean; text?: string; responseHash?: string }) => void) => () => void;
+  onAiResponse?: (callback: (data: { turnId?: string; responseHash?: string; response: string; target?: string; model?: string; latencyMs?: number }) => void) => () => void;
+  onVoiceInterrupted?: (callback: () => void) => () => void;
   notifyVoiceLifecycle?: (state: string) => Promise<void>;
-  getWakeWordStatus?: () => Promise<{ enabled: boolean; keyword: string; provider: string }>;
+  getWakeWordStatus?: () => Promise<{ enabled: boolean; keyword: string; allowedPhrases?: string[]; provider: string; speechActive?: boolean; whisperActive?: boolean; kokoroActive?: boolean; telemetry?: Record<string, any> }>;
+  getWakeTelemetry?: () => Promise<Record<string, any>>;
+  getPrecachedAudio?: (text: string) => Promise<string | null>;
   setIgnoreMouseEvents?: (ignore: boolean, options?: { forward: boolean }) => Promise<void>;
   setDesktopOverlayMode?: (mode: string) => Promise<void>;
+  getSelectedModel?: () => Promise<{ provider: string; model: string }>;
+  setSelectedModel?: (provider: string, model: string) => Promise<{ success: boolean; provider: string; model: string }>;
+  getAvailableModels?: () => Promise<{ local: string[]; cloud: Array<{ provider: string; model: string; label: string }> }>;
+  getDiagnosticStatus?: () => Promise<Record<string, any>>;
+  onModelChanged?: (callback: (data: { provider: string; model: string }) => void) => () => void;
   minimizeWindow: () => Promise<void>;
   maximizeWindow: () => Promise<void>;
   closeWindow: () => Promise<void>;

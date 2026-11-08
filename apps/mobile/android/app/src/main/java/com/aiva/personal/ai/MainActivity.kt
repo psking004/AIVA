@@ -2,6 +2,8 @@ package com.aiva.personal.ai
 
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
+import android.util.Log
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -11,12 +13,28 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
+
+  companion object {
+    private const val TAG = "AIVA_NATIVE"
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
+    Log.i(TAG, "MainActivity onCreate: attaching React Native root view")
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
     super.onCreate(null)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      setShowWhenLocked(true)
+      setTurnScreenOn(true)
+    } else {
+      window.addFlags(
+        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+      )
+    }
+    Log.i(TAG, "MainActivity onCreate completed")
   }
 
   /**

@@ -207,12 +207,39 @@ export class AuthService {
   }
 
   /**
-   * List all registered devices for the owner
+   * List all registered devices for the owner with authoritative heartbeat TTL status
    */
   async listDevices(userId: string) {
-    return this.prisma.device.findMany({
+    const devices = await this.prisma.device.findMany({
       where: { userId },
       orderBy: { lastSeenAt: 'desc' },
+    });
+
+    const now = Date.now();
+    const HEARTBEAT_TTL_MS = 60000; // 60s TTL for device online presence
+
+    return devices.map((device) => {
+      const lastSeenMs = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : 0;
+      const isRecent = now - lastSeenMs <= HEARTBEAT_TTL_MS;
+
+      let status: 'ONLINE' | 'OFFLINE' | 'REGISTERED' | 'REVOKED' | 'UNKNOWN';
+      if (device.revokedAt) {
+        status = 'REVOKED';
+      } else if (isRecent) {
+        status = 'ONLINE';
+      } else if (lastSeenMs > 0) {
+        status = 'OFFLINE';
+      } else {
+        status = 'REGISTERED';
+      }
+
+      return {
+        ...device,
+        status,
+        isOnline: status === 'ONLINE',
+        lastSeenMs,
+        heartbeatTtlMs: HEARTBEAT_TTL_MS,
+      };
     });
   }
 

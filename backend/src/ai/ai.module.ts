@@ -26,6 +26,7 @@ import { ComputeNodeService } from './nodes/compute-node.service';
 import { ComputeSchedulerService } from './nodes/compute-scheduler.service';
 import { RemoteAgentService } from './nodes/remote-agent.service';
 import { FabricDispatchService } from './nodes/fabric-dispatch.service';
+import { LanDiscoveryService } from './nodes/lan-discovery.service';
 
 // Model Providers & Router
 import { OllamaProvider } from './providers/ollama.provider';
@@ -56,8 +57,27 @@ import { CalendarTool } from './tools/calendar.tool';
 import { EmailTool } from './tools/email.tool';
 import { SearchTool } from './tools/search.tool';
 import { FileTool } from './tools/file.tool';
+import { MemoryTool } from './tools/memory.tool';
+import { LocalCalendarProvider } from './tools/calendar/local-calendar.provider';
+import { GoogleCalendarProvider } from './tools/calendar/google-calendar.provider';
+import { LocalEmailProvider } from './tools/email/local-email.provider';
+import { GmailProvider } from './tools/email/gmail.provider';
 
 import { AIController } from './ai.controller';
+
+// Intelligence Kernel & Capabilities
+import { SystemContextProvider } from './kernel/system-context.provider';
+import { WeatherService } from './kernel/weather.service';
+import { WebSearchService } from './kernel/web-search.service';
+import { ProjectAwarenessService } from './kernel/project-awareness.service';
+import { IntelligenceKernel } from './kernel/intelligence-kernel';
+import { FastPathEngine } from './kernel/fast-path.engine';
+
+// Autonomous Action Engine (P0)
+import { ControlledCommandExecutor } from './tools/command-executor.service';
+import { PackageManagerService } from './tools/package-manager.service';
+import { PatchEngineService } from './tools/patch-engine.service';
+import { ScaffolderService } from './tools/scaffolder.service';
 
 @Global()
 @Module({
@@ -78,6 +98,14 @@ import { AIController } from './ai.controller';
     RAGService,
     IntentClassifier,
     ToolRegistry,
+
+    // Intelligence Kernel & Capabilities
+    SystemContextProvider,
+    WeatherService,
+    WebSearchService,
+    ProjectAwarenessService,
+    IntelligenceKernel,
+    FastPathEngine,
 
     // Three-layer memory system
     ShortTermMemory,
@@ -101,13 +129,25 @@ import { AIController } from './ai.controller';
     ComputeSchedulerService,
     RemoteAgentService,
     FabricDispatchService,
+    LanDiscoveryService,
 
-    // Tools
+    // Tools & Integrations
     TaskTool,
+    LocalCalendarProvider,
+    GoogleCalendarProvider,
     CalendarTool,
+    LocalEmailProvider,
+    GmailProvider,
     EmailTool,
     SearchTool,
     FileTool,
+    MemoryTool,
+
+    // Autonomous Action Engine (P0)
+    ControlledCommandExecutor,
+    PackageManagerService,
+    PatchEngineService,
+    ScaffolderService,
   ],
   exports: [
     OllamaProvider,
@@ -121,12 +161,35 @@ import { AIController } from './ai.controller';
     MemoryService,
     RAGService,
     ToolRegistry,
+    SystemContextProvider,
+    WeatherService,
+    WebSearchService,
+    ProjectAwarenessService,
+    IntelligenceKernel,
+    FastPathEngine,
+
+    // Autonomous Action Engine (P0)
+    ControlledCommandExecutor,
+    PackageManagerService,
+    PatchEngineService,
+    ScaffolderService,
 
     // Distributed Compute Fabric & Remote Access
     ComputeNodeService,
     ComputeSchedulerService,
     RemoteAgentService,
     FabricDispatchService,
+    LanDiscoveryService,
+
+    // Tools & Integrations
+    TaskTool,
+    LocalCalendarProvider,
+    GoogleCalendarProvider,
+    CalendarTool,
+    LocalEmailProvider,
+    GmailProvider,
+    EmailTool,
+    MemoryTool,
 
     // Memory & Voice exports
     ShortTermMemory,

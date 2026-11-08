@@ -45,6 +45,10 @@ export interface ComputeNodeRegistration {
   activeWorkloadCount?: number | undefined;
   batteryPercent?: number | undefined;
   isPluggedIn?: boolean | undefined;
+  lanAddress?: string | undefined;
+  port?: number | undefined;
+  lanReachable?: boolean | undefined;
+  firewallStatus?: 'ALLOW' | 'RESTRICTED' | 'UNKNOWN' | undefined;
   lastHeartbeat: number;
 }
 
@@ -111,13 +115,20 @@ export class ComputeNodeService {
   /**
    * Record heartbeat from an active node
    */
-  public recordHeartbeat(key: string, latencyMs?: number): boolean {
+  public recordHeartbeat(
+    key: string,
+    latencyMs?: number,
+    lanAddress?: string,
+    port?: number,
+  ): boolean {
     const node = this.findNode(key);
     if (!node) return false;
 
     node.lastHeartbeat = Date.now();
     node.status = 'ONLINE';
     if (latencyMs !== undefined) node.latencyMs = latencyMs;
+    if (lanAddress) node.lanAddress = lanAddress;
+    if (port !== undefined) node.port = port;
     this.recordNodeSuccess(key);
     return true;
   }
@@ -218,6 +229,10 @@ export class ComputeNodeService {
     batteryPercent?: number;
     isPluggedIn?: boolean;
     latencyMs?: number;
+    lanAddress?: string;
+    port?: number;
+    lanReachable?: boolean;
+    firewallStatus?: 'ALLOW' | 'RESTRICTED' | 'UNKNOWN';
   }): boolean {
     const node = this.findNode(key);
     if (!node) return false;
@@ -230,6 +245,10 @@ export class ComputeNodeService {
     if (telemetry.batteryPercent !== undefined) node.batteryPercent = telemetry.batteryPercent;
     if (telemetry.isPluggedIn !== undefined) node.isPluggedIn = telemetry.isPluggedIn;
     if (telemetry.latencyMs !== undefined) node.latencyMs = telemetry.latencyMs;
+    if (telemetry.lanAddress) node.lanAddress = telemetry.lanAddress;
+    if (telemetry.port !== undefined) node.port = telemetry.port;
+    if (telemetry.lanReachable !== undefined) node.lanReachable = telemetry.lanReachable;
+    if (telemetry.firewallStatus) node.firewallStatus = telemetry.firewallStatus;
 
     // Auto-update status to BUSY if GPU > 90% or CPU > 90%
     if ((node.gpu.utilizationPercent ?? 0) >= 90 || (node.cpu.utilizationPercent ?? 0) >= 90) {
@@ -239,6 +258,21 @@ export class ComputeNodeService {
     }
 
     node.lastHeartbeat = Date.now();
+    return true;
+  }
+
+  /**
+   * Record direct LAN peer reachability status
+   */
+  public recordLanReachability(
+    key: string,
+    isReachable: boolean,
+    firewallStatus: 'ALLOW' | 'RESTRICTED',
+  ): boolean {
+    const node = this.findNode(key);
+    if (!node) return false;
+    node.lanReachable = isReachable;
+    node.firewallStatus = firewallStatus;
     return true;
   }
 

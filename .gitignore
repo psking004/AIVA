@@ -65,4 +65,9 @@ apps/mobile/android/build/
 apps/mobile/android/app/build/
 apps/mobile/android/.gradle/
 apps/mobile/wakeword_backup/
-release/
+release/backend/data/long_term_vector_store.json
+projects/
+*.png
+*.mp3
+android-aiva-log.txt
+mobile_tokens.json

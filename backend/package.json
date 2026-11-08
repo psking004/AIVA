@@ -14,7 +14,7 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:seed": "tsx src/database/seed.ts",
-    "test": "tsx src/ai/router/model-router.spec.ts && tsx src/modules/auth/auth.service.spec.ts && tsx src/modules/projects/projects.service.spec.ts && tsx src/ai/nodes/distributed-independence.spec.ts"
+    "test": "tsx src/ai/router/model-router.spec.ts && tsx src/modules/auth/auth.service.spec.ts && tsx src/modules/projects/projects.service.spec.ts && tsx src/ai/nodes/distributed-independence.spec.ts && tsx src/ai/nodes/lan-discovery.spec.ts && tsx src/ai/kernel/master-intelligence-suite.spec.ts && tsx src/ai/kernel/response-deduplication.spec.ts && tsx src/ai/kernel/wake-gate.spec.ts && tsx src/ai/kernel/fast-path.spec.ts && tsx src/ai/tools/scaffolder.spec.ts && tsx src/ai/tools/command-executor.spec.ts && tsx src/ai/agents/coding-agent-autonomous.spec.ts && tsx src/ai/tools/file-tool.spec.ts && tsx src/ai/tools/calendar-gmail-memory.spec.ts"
   },
   "dependencies": {
     "@langchain/community": "^0.3.32",

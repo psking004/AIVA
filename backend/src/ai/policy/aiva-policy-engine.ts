@@ -50,6 +50,8 @@ export class AivaPolicyEngine {
     ['TASK_READ', { capability: 'TASK_READ', level: 0, description: 'Read user tasks and action items', requiresConfirmation: false, isDestructive: false }],
     ['PROJECT_READ', { capability: 'PROJECT_READ', level: 0, description: 'Read project matrix & initiatives', requiresConfirmation: false, isDestructive: false }],
     ['CALENDAR_READ', { capability: 'CALENDAR_READ', level: 0, description: 'Read calendar timeline & events', requiresConfirmation: false, isDestructive: false }],
+    ['EMAIL_READ', { capability: 'EMAIL_READ', level: 0, description: 'Read incoming messages & inbox status', requiresConfirmation: false, isDestructive: false }],
+    ['EMAIL_SEARCH', { capability: 'EMAIL_SEARCH', level: 0, description: 'Search emails by query', requiresConfirmation: false, isDestructive: false }],
     ['MEMORY_READ', { capability: 'MEMORY_READ', level: 0, description: 'Search episodic and semantic memory', requiresConfirmation: false, isDestructive: false }],
     ['CODE_READ', { capability: 'CODE_READ', level: 0, description: 'Read repository source code', requiresConfirmation: false, isDestructive: false }],
     ['CODE_SEARCH', { capability: 'CODE_SEARCH', level: 0, description: 'Search codebase for symbols/files', requiresConfirmation: false, isDestructive: false }],
@@ -59,12 +61,21 @@ export class AivaPolicyEngine {
     // Level 1: Low-Risk Internal Operations (Autonomous)
     ['TASK_CREATE', { capability: 'TASK_CREATE', level: 1, description: 'Create a new personal task', requiresConfirmation: false, isDestructive: false }],
     ['TASK_UPDATE', { capability: 'TASK_UPDATE', level: 1, description: 'Update task status or priority', requiresConfirmation: false, isDestructive: false }],
+    ['CALENDAR_CREATE', { capability: 'CALENDAR_CREATE', level: 1, description: 'Create calendar event or appointment', requiresConfirmation: false, isDestructive: false }],
+    ['CALENDAR_UPDATE', { capability: 'CALENDAR_UPDATE', level: 1, description: 'Update calendar event details', requiresConfirmation: false, isDestructive: false }],
     ['NOTE_CREATE', { capability: 'NOTE_CREATE', level: 1, description: 'Create or organize a personal note', requiresConfirmation: false, isDestructive: false }],
     ['EMAIL_DRAFT', { capability: 'EMAIL_DRAFT', level: 1, description: 'Draft an email without sending', requiresConfirmation: false, isDestructive: false }],
     ['MEMORY_WRITE', { capability: 'MEMORY_WRITE', level: 1, description: 'Store user preferences & facts', requiresConfirmation: false, isDestructive: false }],
+    ['PROJECT_CREATE', { capability: 'PROJECT_CREATE', level: 1, description: 'Autonomously scaffold application template in workspace', requiresConfirmation: false, isDestructive: false }],
+    ['PACKAGE_INSTALL', { capability: 'PACKAGE_INSTALL', level: 2, description: 'Install approved dependencies via package manager', requiresConfirmation: false, isDestructive: false }],
+    ['AST_DIFF_PATCH', { capability: 'AST_DIFF_PATCH', level: 1, description: 'Targeted chunk code modification with backup and rollback', requiresConfirmation: false, isDestructive: false }],
+    ['CONTROLLED_COMMAND', { capability: 'CONTROLLED_COMMAND', level: 2, description: 'Execute whitelisted build, test, or development command', requiresConfirmation: false, isDestructive: false }],
 
-    // Level 2: Sensitive Operations (User Confirmation Required)
-    ['EMAIL_SEND', { capability: 'EMAIL_SEND', level: 2, description: 'Dispatch outgoing email', requiresConfirmation: true, isDestructive: false }],
+    // Level 2: Sensitive Operations
+    ['CALENDAR_DELETE', { capability: 'CALENDAR_DELETE', level: 2, description: 'Remove event from calendar', requiresConfirmation: false, isDestructive: true }],
+    ['EMAIL_SEND', { capability: 'EMAIL_SEND', level: 2, description: 'Dispatch outgoing email', requiresConfirmation: false, isDestructive: false }],
+    ['EMAIL_REPLY', { capability: 'EMAIL_REPLY', level: 2, description: 'Reply to incoming email message', requiresConfirmation: false, isDestructive: false }],
+    ['MEMORY_DELETE', { capability: 'MEMORY_DELETE', level: 2, description: 'Delete stored long-term vector memory', requiresConfirmation: false, isDestructive: true }],
     ['PROJECT_UPDATE', { capability: 'PROJECT_UPDATE', level: 2, description: 'Modify project initiatives & state', requiresConfirmation: true, isDestructive: false }],
     ['CODE_EDIT', { capability: 'CODE_EDIT', level: 2, description: 'Modify workspace source code files', requiresConfirmation: true, isDestructive: false }],
     ['TEST_RUN', { capability: 'TEST_RUN', level: 2, description: 'Execute automated test suite', requiresConfirmation: true, isDestructive: false }],
@@ -137,7 +148,7 @@ export class AivaPolicyEngine {
    */
   public verifyActionOutcome(
     actionName: string,
-    executionResult: { exitCode?: number; error?: string; stdout?: string }
+    executionResult: { exitCode?: number | undefined; error?: string | undefined; stdout?: string | undefined }
   ): VerificationResult {
     if (executionResult.error || (executionResult.exitCode !== undefined && executionResult.exitCode !== 0)) {
       this.logger.warn(`Action ${actionName} failed verification with exitCode=${executionResult.exitCode}, error=${executionResult.error}`);

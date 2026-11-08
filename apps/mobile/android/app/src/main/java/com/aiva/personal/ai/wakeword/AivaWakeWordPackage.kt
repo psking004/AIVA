@@ -9,7 +9,10 @@ import com.facebook.react.uimanager.ViewManager
 
 class AivaWakeWordPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(AivaWakeWordModule(reactContext))
+        return listOf(
+            AivaWakeWordModule(reactContext),
+            AivaVoiceModule(reactContext)
+        )
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<View, ReactShadowNode<*>>> {

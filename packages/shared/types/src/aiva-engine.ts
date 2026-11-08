@@ -64,8 +64,11 @@ export interface AivaParsedCommand {
 export function parseAivaVoiceCommand(rawText: string): AivaParsedCommand {
   const text = rawText.toLowerCase().trim();
 
-  // 1. Dismiss / Close Commands
+  // 1. Dismiss / Close / Stop Commands
   if (
+    text === 'stop' ||
+    text.startsWith('stop') ||
+    text.includes('stop') ||
     text.includes('close') ||
     text.includes('close this') ||
     text.includes('dismiss') ||
@@ -75,13 +78,14 @@ export function parseAivaVoiceCommand(rawText: string): AivaParsedCommand {
     text.includes("that's all") ||
     text.includes('thats all') ||
     text.includes('hide') ||
-    text.includes('exit')
+    text.includes('exit') ||
+    text.includes('quiet')
   ) {
     return {
       rawText,
       intent: 'DISMISS_UI',
       targetOverlay: null,
-      spokenResponse: 'Closing interface.',
+      spokenResponse: '',
       requiresUI: false,
     };
   }

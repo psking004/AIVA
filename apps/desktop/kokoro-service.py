@@ -12,14 +12,25 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import soundfile as sf
 
-# Paths
-_dir = os.path.abspath(__file__)
-for _ in range(3):
-    _dir = os.path.dirname(_dir)
-PROJECT_ROOT = _dir
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models", "kokoro")
-if not os.path.exists(MODELS_DIR):
-    MODELS_DIR = os.path.join(os.getcwd(), "models", "kokoro")
+# Resilient Kokoro model path resolution
+def resolve_models_dir():
+    candidates = [
+        r"C:\Users\bhara\AIVA\models\kokoro",
+        os.path.join(os.getcwd(), "models", "kokoro"),
+    ]
+    cur = os.path.abspath(__file__)
+    for _ in range(6):
+        cur = os.path.dirname(cur)
+        candidates.append(os.path.join(cur, "models", "kokoro"))
+    if "APPDATA" in os.environ:
+        candidates.append(os.path.join(os.environ["APPDATA"], "AIVA", "models", "kokoro"))
+
+    for c in candidates:
+        if os.path.exists(os.path.join(c, "kokoro-v0_19.onnx")) and os.path.exists(os.path.join(c, "voices.bin")):
+            return c
+    return os.path.join(os.getcwd(), "models", "kokoro")
+
+MODELS_DIR = resolve_models_dir()
 MODEL_PATH = os.path.join(MODELS_DIR, "kokoro-v0_19.onnx")
 VOICES_PATH = os.path.join(MODELS_DIR, "voices.bin")
 
@@ -42,6 +53,12 @@ def init_engine():
             emma = kokoro_engine.voices["bf_emma"]
             aiva_voice_vector = 0.6 * sarah + 0.4 * emma
             sys.stderr.write("[KOKORO TTS] Blended AIVA voice identity created (60% af_sarah + 40% bf_emma)\n")
+        try:
+            warm_voice = aiva_voice_vector if aiva_voice_vector is not None else "af_sarah"
+            kokoro_engine.create("ready", voice=warm_voice, speed=1.0, lang="en-us")
+            sys.stderr.write("[KOKORO TTS] Model and phonemizer pre-warmed.\n")
+        except Exception as warm_err:
+            sys.stderr.write(f"[KOKORO TTS] Pre-warm notice: {warm_err}\n")
         sys.stderr.write(f"[KOKORO TTS] Model loaded successfully in {round(time.time() - t0, 2)}s\n")
         return True
     except Exception as e:
@@ -83,14 +100,16 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 return
 
             text = data.get("text", "").strip()
-            voice = data.get("voice", "af_sarah")  # AIVA default voice: British/international calm female
-            speed = float(data.get("speed", 1.05))
+            voice = data.get("voice", "af_heart")  # AIVA preferred female voice: warm, intelligent, articulate
+            speed = float(data.get("speed", 1.0))
 
             if not text:
                 self.send_response(400)
                 self.end_headers()
                 self.wfile.write(b'{"error": "empty_text"}')
                 return
+
+            sys.stderr.write(f"[TTS PERF] request: chars={len(text)}\n")
 
             if kokoro_engine is None:
                 # Try lazy init
@@ -102,30 +121,49 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
             try:
                 voice_target = voice
-                if str(voice).lower() in ("aiva", "default") and aiva_voice_vector is not None:
+                if str(voice).lower() in ("af_heart", "aiva", "default"):
+                    if "af_heart" in kokoro_engine.voices:
+                        voice_target = kokoro_engine.voices["af_heart"]
+                    elif aiva_voice_vector is not None:
+                        voice_target = aiva_voice_vector
+                    elif "af_sarah" in kokoro_engine.voices:
+                        voice_target = "af_sarah"
+                elif str(voice) not in kokoro_engine.voices and aiva_voice_vector is not None:
                     voice_target = aiva_voice_vector
 
+                t_synth_start = time.time()
+                sys.stderr.write("[TTS PERF] synthesis-start\n")
                 samples, sample_rate = kokoro_engine.create(text, voice=voice_target, speed=speed, lang="en-us")
+                t_synth_end = time.time()
+                synth_latency_ms = round((t_synth_end - t_synth_start) * 1000)
+                sys.stderr.write(f"[TTS PERF] synthesis-complete: {synth_latency_ms}ms\n")
+
                 wav_buffer = io.BytesIO()
                 sf.write(wav_buffer, samples, sample_rate, format="WAV", subtype="PCM_16")
                 wav_bytes = wav_buffer.getvalue()
-                latency_ms = round((time.time() - t_start) * 1000)
+                total_latency_ms = round((time.time() - t_start) * 1000)
 
-                sys.stderr.write(f"[KOKORO TTS SUCCESS] {len(text)} chars -> {len(wav_bytes)} bytes in {latency_ms}ms (voice={voice})\n")
+                sys.stderr.write(f"[KOKORO TTS SUCCESS] {len(text)} chars -> {len(wav_bytes)} bytes in {total_latency_ms}ms (voice={voice})\n")
 
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/wav")
                 self.send_header("Content-Length", str(len(wav_bytes)))
-                self.send_header("X-Latency-Ms", str(latency_ms))
+                self.send_header("X-Latency-Ms", str(total_latency_ms))
+                self.send_header("X-Synth-Latency-Ms", str(synth_latency_ms))
                 self.end_headers()
                 self.wfile.write(wav_bytes)
 
+            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                sys.stderr.write("[KOKORO TTS] Client disconnected before audio transmission completed.\n")
             except Exception as e:
                 sys.stderr.write(f"[KOKORO TTS Error] {e}\n")
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                try:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+                except Exception:
+                    pass
         else:
             self.send_response(404)
             self.end_headers()
@@ -134,11 +172,18 @@ def run_server(port=5050):
     init_engine()
     server = HTTPServer(("127.0.0.1", port), KokoroHandler)
     sys.stderr.write(f"[KOKORO TTS] Daemon listening on http://127.0.0.1:{port}\n")
+    print(f"[KOKORO TTS] Kokoro TTS Daemon running on http://127.0.0.1:{port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         sys.stderr.write("[KOKORO TTS] Server stopped.\n")
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5050
+    import argparse
+    parser = argparse.ArgumentParser(description="Kokoro TTS Microservice")
+    parser.add_argument("--port", type=int, default=5050, help="Port to listen on")
+    parser.add_argument("--voice", type=str, default="af_heart", help="Default voice")
+    parser.add_argument("positional_port", nargs="?", type=int, default=None, help="Optional positional port")
+    args = parser.parse_args()
+    port = args.positional_port if args.positional_port is not None else args.port
     run_server(port)

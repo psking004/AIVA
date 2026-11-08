@@ -10,6 +10,7 @@ import {
   UseGuards,
   Request,
   Res,
+  Optional,
 } from '@nestjs/common';
 import { Response } from 'express';
 import { AIVAService } from './aiva.service';
@@ -22,6 +23,7 @@ import { ComputeNodeService, type ComputeNodeRegistration } from './nodes/comput
 import { ComputeSchedulerService, WorkloadRequest } from './nodes/compute-scheduler.service';
 import { RemoteAgentService, RemoteExecutionRequest } from './nodes/remote-agent.service';
 import { FabricDispatchService } from './nodes/fabric-dispatch.service';
+import { LanDiscoveryService } from './nodes/lan-discovery.service';
 
 export class ChatRequestDto {
   @IsString()
@@ -36,11 +38,21 @@ export class ChatRequestDto {
   strategy?: string;
 
   @IsOptional()
+  @IsString()
+  provider?: string;
+
+  @IsOptional()
+  @IsString()
+  model?: string;
+
+  @IsOptional()
   @IsObject()
   options?: {
     temperature?: number;
     maxTokens?: number;
     strategy?: string;
+    provider?: string;
+    model?: string;
   };
 }
 
@@ -55,6 +67,7 @@ export class AIController {
     private readonly computeScheduler: ComputeSchedulerService,
     private readonly remoteAgent: RemoteAgentService,
     private readonly fabricDispatch: FabricDispatchService,
+    @Optional() private readonly lanDiscovery?: LanDiscoveryService,
   ) {}
 
   /**
@@ -72,6 +85,8 @@ export class AIController {
       (req.headers?.['x-request-id'] as string) ||
       `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const mode = body.strategy || body.options?.strategy || 'default';
+    const provider = body.provider || body.options?.provider;
+    const model = body.model || body.options?.model;
 
     return this.aivaService.chat(userId, body.message, body.conversationId, {
       requestId,
@@ -79,6 +94,8 @@ export class AIController {
       deviceAuthorized: !!req.deviceId || deviceId !== 'none',
       route: '/ai/chat',
       mode,
+      provider,
+      model,
       clientPlatform,
       sourceDeviceId: deviceId,
     });
@@ -100,13 +117,23 @@ export class AIController {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
+    const clientPlatform =
+      (req.headers?.['x-client-platform'] as string) ||
+      (req.headers?.['x-platform'] as string) ||
+      'web';
+
+    const streamOptions = {
+      ...body.options,
+      clientPlatform,
+    };
+
     try {
       const response = await this.modelRouter.streamChat(
         [{ role: 'user', content: body.message }],
         (chunk: string) => {
           res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
         },
-        body.options,
+        streamOptions,
       );
 
       // Record interaction turn in memory
@@ -158,9 +185,108 @@ export class AIController {
    * Node Heartbeat Ping
    */
   @Post('fabric/heartbeat')
-  async heartbeat(@Body() body: { deviceId: string; latencyMs?: number }) {
-    const success = this.computeNodeService.recordHeartbeat(body.deviceId, body.latencyMs);
+  async heartbeat(
+    @Body()
+    body: {
+      deviceId: string;
+      latencyMs?: number;
+      lanAddress?: string;
+      port?: number;
+    },
+  ) {
+    const success = this.computeNodeService.recordHeartbeat(
+      body.deviceId,
+      body.latencyMs,
+      body.lanAddress,
+      body.port,
+    );
     return { success, deviceId: body.deviceId, timestamp: Date.now() };
+  }
+
+  /**
+   * Direct Local LAN Node Health & Status Endpoint
+   */
+  @Get('fabric/lan/ping')
+  async lanPing() {
+    return {
+      status: 'ONLINE',
+      timestamp: Date.now(),
+      nodeId: process.env.AIVA_NODE_ID || 'PC-A',
+      nodeRole: process.env.AIVA_NODE_ROLE || 'AI_POWER_NODE',
+      capabilities: ['CUDA', 'LOCAL_LLM', 'FAST_PATH', 'CODE_EXEC'],
+    };
+  }
+
+  /**
+   * Local Wi-Fi Discovery Status
+   */
+  @Get('fabric/discovery/status')
+  async getDiscoveryStatus() {
+    return this.lanDiscovery?.getDiscoveryStatus() || { active: false };
+  }
+
+  /**
+   * Direct Local LAN Peer Reachability Probe
+   */
+  @Post('fabric/lan/probe')
+  async probePeer(
+    @Body()
+    body: {
+      targetIp: string;
+      targetPort?: number;
+      timeoutMs?: number;
+    },
+  ) {
+    const port = body.targetPort || 10000;
+    const timeout = body.timeoutMs || 1500;
+    const t0 = Date.now();
+
+    return new Promise((resolve) => {
+      const net = require('net');
+      const socket = new net.Socket();
+      socket.setTimeout(timeout);
+
+      socket.on('connect', () => {
+        const latencyMs = Date.now() - t0;
+        socket.destroy();
+        this.computeNodeService.recordLanReachability(body.targetIp, true, 'ALLOW');
+        resolve({
+          reachable: true,
+          targetIp: body.targetIp,
+          port,
+          latencyMs,
+          firewallStatus: 'ALLOW',
+        });
+      });
+
+      socket.on('timeout', () => {
+        socket.destroy();
+        this.computeNodeService.recordLanReachability(body.targetIp, false, 'RESTRICTED');
+        resolve({
+          reachable: false,
+          targetIp: body.targetIp,
+          port,
+          latencyMs: Date.now() - t0,
+          firewallStatus: 'RESTRICTED',
+          error: 'Connection timed out (firewall restriction or offline)',
+        });
+      });
+
+      socket.on('error', (err: any) => {
+        socket.destroy();
+        this.computeNodeService.recordLanReachability(body.targetIp, false, 'RESTRICTED');
+        resolve({
+          reachable: false,
+          targetIp: body.targetIp,
+          port,
+          latencyMs: Date.now() - t0,
+          firewallStatus: 'RESTRICTED',
+          error: err?.message || 'Connection error',
+        });
+      });
+
+      socket.connect(port, body.targetIp);
+    });
   }
 
   /**

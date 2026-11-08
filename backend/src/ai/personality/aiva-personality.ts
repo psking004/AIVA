@@ -80,7 +80,11 @@ When context is provided, use it naturally — reference what you remember witho
 /**
  * Build a contextual system prompt with user-specific information
  */
-export function buildPersonalizedPrompt(userName?: string, preferences?: Record<string, unknown>): string {
+export function buildPersonalizedPrompt(
+  userName?: string,
+  preferences?: Record<string, unknown>,
+  longTermContext?: string,
+): string {
   let prompt = AIVA_SYSTEM_PROMPT;
 
   if (userName) {
@@ -89,6 +93,10 @@ export function buildPersonalizedPrompt(userName?: string, preferences?: Record<
 
   if (preferences && Object.keys(preferences).length > 0) {
     prompt += `\n- Known preferences: ${JSON.stringify(preferences)}`;
+  }
+
+  if (longTermContext && longTermContext.trim().length > 0) {
+    prompt += `\n\n[LONG-TERM CONTEXT]\n${longTermContext.trim()}`;
   }
 
   return prompt;
