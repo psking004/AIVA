@@ -77,10 +77,18 @@ class AivaVoiceService {
     voiceEmitter.addListener('onSpeechPartialResult', handlePartial);
     voiceEmitter.addListener('onSpeechPartialResults', handlePartial);
 
-    // Handle final results from both singular and plural event signatures
+    // Handle final results from both singular and plural event signatures with deduplication
+    let lastFinalTranscript = '';
+    let lastFinalTime = 0;
     const handleFinal = (data: { text?: string; value?: string[]; isFinal?: boolean }) => {
       const transcript = (data?.text || data?.value?.[0] || '').trim();
+      const now = Date.now();
       if (transcript) {
+        if (transcript === lastFinalTranscript && now - lastFinalTime < 800) {
+          return; // Deduplicate duplicate plural/singular event receipt
+        }
+        lastFinalTranscript = transcript;
+        lastFinalTime = now;
         console.log('[EVIDENCE-4] Final STT transcript produced:', transcript);
         this.textListeners.forEach((l) => l(transcript, true));
       }
@@ -96,9 +104,19 @@ class AivaVoiceService {
     });
 
     voiceEmitter.addListener('onSpeechError', (data: { errorCode: number; errorMessage: string }) => {
-      console.warn('[AIVA Voice] onSpeechError received:', data?.errorMessage, `(code: ${data?.errorCode})`);
+      const code = data?.errorCode;
+      console.warn('[AIVA Voice] onSpeechError received:', data?.errorMessage, `(code: ${code})`);
+
+      // Code 7 (ERROR_NO_MATCH / silence) and Code 8 (ERROR_RECOGNIZER_BUSY):
+      // Cleanly reset to IDLE without treating as fatal error
+      if (code === 7 || code === 8) {
+        console.log(`[AIVA Voice] Code ${code} (No match / silence / busy). Resetting to IDLE cleanly.`);
+        this.setState('IDLE');
+        return;
+      }
+
       const err: VoiceError = {
-        code: data?.errorCode ?? -1,
+        code: code ?? -1,
         message: data?.errorMessage || 'Speech recognition error',
       };
       this.setState('ERROR');

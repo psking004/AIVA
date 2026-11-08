@@ -317,18 +317,21 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                     val text = matches?.firstOrNull() ?: ""
                     Log.i(TAG, "SpeechRecognizer: onResults final transcript: '$text', all matches: $matches")
 
-                    val matchesArray = Arguments.createArray()
-                    matches?.forEach { matchesArray.pushString(it) }
-
-                    val resultsParams = Arguments.createMap().apply {
-                        putArray("value", matchesArray)
+                    // Never reuse WritableMap: create separate fresh instances for each emit
+                    val matchesArrayPlural = Arguments.createArray()
+                    matches?.forEach { matchesArrayPlural.pushString(it) }
+                    val resultsMapPlural = Arguments.createMap().apply {
+                        putArray("value", matchesArrayPlural)
                         putString("text", text)
                         putBoolean("isFinal", true)
                     }
+                    sendEvent("onSpeechResults", resultsMapPlural)
 
-                    // Explicitly emit both onSpeechResults and onSpeechEnd as required
-                    sendEvent("onSpeechResults", resultsParams)
-                    sendEvent("onSpeechResult", resultsParams)
+                    val resultsMapSingular = Arguments.createMap().apply {
+                        putString("text", text)
+                        putBoolean("isFinal", true)
+                    }
+                    sendEvent("onSpeechResult", resultsMapSingular)
                     sendEvent("onSpeechEnd", Arguments.createMap())
 
                     mainHandler.post {
@@ -344,17 +347,23 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                 override fun onPartialResults(partialResults: Bundle?) {
                     val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val text = matches?.firstOrNull() ?: ""
-                    Log.i(TAG, "SpeechRecognizer: onPartialResults: '$text'")
+                    if (text.isNotEmpty()) {
+                        Log.i(TAG, "SpeechRecognizer: onPartialResults: '$text'")
 
-                    val matchesArray = Arguments.createArray()
-                    matches?.forEach { matchesArray.pushString(it) }
+                        // Never reuse WritableMap: create separate fresh instances for each emit
+                        val matchesArrayPlural = Arguments.createArray()
+                        matches?.forEach { matchesArrayPlural.pushString(it) }
+                        val partialMapPlural = Arguments.createMap().apply {
+                            putArray("value", matchesArrayPlural)
+                            putString("text", text)
+                        }
+                        sendEvent("onSpeechPartialResults", partialMapPlural)
 
-                    val params = Arguments.createMap().apply {
-                        putArray("value", matchesArray)
-                        putString("text", text)
+                        val partialMapSingular = Arguments.createMap().apply {
+                            putString("text", text)
+                        }
+                        sendEvent("onSpeechPartialResult", partialMapSingular)
                     }
-                    sendEvent("onSpeechPartialResults", params)
-                    sendEvent("onSpeechPartialResult", params)
                 }
 
                 override fun onEvent(eventType: Int, params: Bundle?) {}

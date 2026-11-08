@@ -145,6 +145,7 @@ export default function MobileHomeScreen() {
         const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 15000));
         await Promise.race([ttsPromise, timeoutPromise]);
       } catch (err) {
+        console.error('[AIVA Voice Error]', err);
         console.warn('[AIVA Mobile] TTS speak error:', err);
       } finally {
         if (voiceStateRef.current !== 'LISTENING') {
@@ -339,6 +340,7 @@ export default function MobileHomeScreen() {
           await wakeWordService.startListening('BALANCED');
         }
       } catch (err) {
+        console.error('[AIVA Voice Error]', err);
         console.warn('[AIVA Mobile] Wake-word start error:', err);
       }
     };
@@ -603,3 +605,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 });
+
