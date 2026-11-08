@@ -36,6 +36,7 @@ import { ContextualSheet } from '../src/components/contextual-sheet';
 import { wakeWordService } from '../src/services/wakeword/wake-word.service';
 import { aivaClient } from '../src/services/api/aiva-client';
 import { aivaVoiceService, VoiceState } from '../src/services/voice/voice.service';
+import { remoteExecService } from '../src/services/remote/remote-exec.service';
 
 export default function MobileHomeScreen() {
   // Presence lifecycle: DORMANT by default (face hidden, minimal clock)
@@ -204,34 +205,48 @@ export default function MobileHomeScreen() {
       setFaceState('THINKING');
       aivaVoiceService.setState('PROCESSING');
 
-      // Fallback watchdog timer (8s) preventing stuck PROCESSING state on multi-turn
+      // Fallback watchdog timer (20s) preventing stuck PROCESSING state on multi-turn
       const watchdog = setTimeout(() => {
-        if (isProcessingRef.current) {
-          console.warn('[AIVA Voice] Watchdog triggered: command processing exceeded 8s limit, resetting concurrency lock.');
+        if (isProcessingRef.current && voiceStateRef.current !== 'SPEAKING') {
+          console.warn('[AIVA Voice] Watchdog triggered: command processing exceeded 20s limit, resetting concurrency lock.');
           isProcessingRef.current = false;
           aivaVoiceService.setState('IDLE');
           setFaceState('IDLE');
           scheduleDormancy(2500);
         }
-      }, 8000);
+      }, 20000);
 
       try {
         const parsed = parseAivaVoiceCommand(clean);
 
         if (parsed.intent === 'DISMISS_UI') {
           setActiveOverlay(null);
+          clearTimeout(watchdog);
           await speakResponse(parsed.spokenResponse || 'Closing interface.');
           return;
         }
 
         if (parsed.intent === 'SUMMON_UI' && parsed.targetOverlay) {
           setActiveOverlay(parsed.targetOverlay);
+          clearTimeout(watchdog);
           await speakResponse(parsed.spokenResponse || `Opening ${parsed.targetOverlay}.`);
+          return;
+        }
+
+        // Tri-Node Remote Execution Intent Check (PC-A & PC-B)
+        const remoteIntent = remoteExecService.detectRemoteExecutionIntent(clean);
+        if (remoteIntent) {
+          console.log('[AIVA Voice] Remote execution intent recognized:', remoteIntent);
+          const execResult = await remoteExecService.executeIntent(remoteIntent);
+          clearTimeout(watchdog);
+          setLastResponseText(execResult.spokenResponse);
+          await speakResponse(execResult.spokenResponse);
           return;
         }
 
         console.log('[EVIDENCE-6] Backend receives the request for query:', clean);
         const res = await aivaClient.sendChatMessage(clean);
+        clearTimeout(watchdog);
         if (!res.success) {
           console.warn('[AIVA Voice] Intelligence service error (not spoken as assistant response):', res.error);
           const safeFallback = "I'm having temporary trouble reaching the intelligence servers. Please try again in a moment.";
@@ -247,6 +262,7 @@ export default function MobileHomeScreen() {
         setLastResponseText(reply);
         await speakResponse(reply);
       } catch (err: any) {
+        clearTimeout(watchdog);
         console.warn('[AIVA Mobile] Voice processing error:', err);
         const fallback = "I'm having temporary trouble reaching the intelligence servers. Please try again in a moment.";
         setLastResponseText(fallback);
@@ -298,18 +314,20 @@ export default function MobileHomeScreen() {
       } else if (state === 'SPEAKING') {
         setFaceState('SPEAKING');
       } else if (state === 'INTERRUPTED') {
+        isProcessingRef.current = false;
         setFaceState('IDLE');
       } else if (state === 'ERROR') {
+        isProcessingRef.current = false;
         setFaceState('IDLE');
         scheduleDormancy(3000);
       } else if (state === 'DORMANT') {
+        isProcessingRef.current = false;
         setPresenceState('DORMANT');
         setFaceState('IDLE');
       } else if (state === 'IDLE') {
-        if (!isProcessingRef.current) {
-          setFaceState('IDLE');
-          scheduleDormancy(6000);
-        }
+        isProcessingRef.current = false;
+        setFaceState('IDLE');
+        scheduleDormancy(6000);
       }
 
       if (event?.type === 'RESULT' && event.text) {
@@ -477,7 +495,7 @@ export default function MobileHomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#060709',
+    backgroundColor: 'transparent',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingVertical: 12,

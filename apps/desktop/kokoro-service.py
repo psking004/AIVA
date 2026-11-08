@@ -69,10 +69,18 @@ class KokoroHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"[KOKORO TTS] {format % args}\n")
 
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-device-id")
+        self.end_headers()
+
     def do_GET(self):
         if self.path == "/health":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             status = {
                 "status": "ready" if kokoro_engine is not None else "uninitialized",
@@ -81,6 +89,20 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 "provider": "kokoro",
             }
             self.wfile.write(json.dumps(status).encode("utf-8"))
+        elif self.path in ("/api/remote-exec", "/api/status"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            resp = {
+                "success": True,
+                "node": "PC-B",
+                "status": "ONLINE",
+                "ip": "10.84.73.59",
+                "tts": "ready" if kokoro_engine is not None else "uninitialized",
+                "message": "PC-B host workstation daemon active"
+            }
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
@@ -164,15 +186,113 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
                 except Exception:
                     pass
+        elif self.path == "/api/remote-exec":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length)
+            try:
+                data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            except Exception:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(b'{"error": "invalid_json"}')
+                return
+
+            target = str(data.get("target", "PC-B")).upper()
+            action = str(data.get("action", "STATUS")).upper()
+            query = str(data.get("query", ""))
+            command = str(data.get("command", ""))
+
+            sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, query='{query}'\n")
+
+            # Route for PC-A target
+            if "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():
+                import socket
+                pca_ip = "10.84.73.194"
+                ollama_up = False
+                winrm_up = False
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(1.2)
+                    s.connect((pca_ip, 11434))
+                    s.close()
+                    ollama_up = True
+                except Exception:
+                    pass
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(1.2)
+                    s.connect((pca_ip, 5985))
+                    s.close()
+                    winrm_up = True
+                except Exception:
+                    pass
+
+                if ollama_up or winrm_up:
+                    spoken = f"PC-A GPU power workstation is online. Ollama port 11434 is {'active' if ollama_up else 'offline'} and WinRM is {'active' if winrm_up else 'offline'}."
+                    status_str = "ONLINE"
+                else:
+                    spoken = "PC-A compute workstation is currently sleeping on the local network. Distributed compute is routing through Cloud fallback."
+                    status_str = "OFFLINE_STANDBY"
+
+                res_data = {
+                    "success": True,
+                    "node": "PC-A",
+                    "status": status_str,
+                    "ip": pca_ip,
+                    "ollama": ollama_up,
+                    "winrm": winrm_up,
+                    "spokenResponse": spoken
+                }
+            else:
+                # PC-B Target
+                if action in ("BUILD", "TEST", "CODE", "EXEC") and command:
+                    import subprocess
+                    try:
+                        proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=15)
+                        output_snippet = (proc.stdout or proc.stderr or "").strip()[:200]
+                        spoken = f"Command executed on PC-B with exit code {proc.returncode}. {output_snippet[:80]}"
+                        res_data = {
+                            "success": proc.returncode == 0,
+                            "node": "PC-B",
+                            "exitCode": proc.returncode,
+                            "stdout": proc.stdout,
+                            "stderr": proc.stderr,
+                            "spokenResponse": spoken
+                        }
+                    except Exception as exec_err:
+                        res_data = {
+                            "success": False,
+                            "node": "PC-B",
+                            "error": str(exec_err),
+                            "spokenResponse": f"Execution error on PC-B: {str(exec_err)}"
+                        }
+                else:
+                    spoken = "PC-B host workstation is online and fully operational. Kokoro TTS, Whisper STT, and desktop daemons are healthy."
+                    res_data = {
+                        "success": True,
+                        "node": "PC-B",
+                        "status": "ONLINE",
+                        "ip": "10.84.73.59",
+                        "tts": "ready" if kokoro_engine is not None else "uninitialized",
+                        "spokenResponse": spoken
+                    }
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(res_data).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
 
 def run_server(port=5050):
     init_engine()
-    server = HTTPServer(("127.0.0.1", port), KokoroHandler)
-    sys.stderr.write(f"[KOKORO TTS] Daemon listening on http://127.0.0.1:{port}\n")
-    print(f"[KOKORO TTS] Kokoro TTS Daemon running on http://127.0.0.1:{port}", flush=True)
+    server = HTTPServer(("0.0.0.0", port), KokoroHandler)
+    sys.stderr.write(f"[KOKORO TTS] Daemon listening on http://0.0.0.0:{port}\n")
+    print(f"[KOKORO TTS] Kokoro TTS Daemon running on http://0.0.0.0:{port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

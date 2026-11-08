@@ -359,11 +359,13 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   faceWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
+    backgroundColor: 'transparent',
   },
   image: {
     width: '100%',
