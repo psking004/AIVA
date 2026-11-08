@@ -141,7 +141,9 @@ export default function MobileHomeScreen() {
       clearTimers();
       setPresenceState('ACTIVE');
       try {
-        await aivaVoiceService.speak(text);
+        const ttsPromise = aivaVoiceService.speak(text);
+        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 15000));
+        await Promise.race([ttsPromise, timeoutPromise]);
       } catch (err) {
         console.warn('[AIVA Mobile] TTS speak error:', err);
       } finally {
@@ -201,6 +203,17 @@ export default function MobileHomeScreen() {
       setFaceState('THINKING');
       aivaVoiceService.setState('PROCESSING');
 
+      // Fallback watchdog timer (8s) preventing stuck PROCESSING state on multi-turn
+      const watchdog = setTimeout(() => {
+        if (isProcessingRef.current) {
+          console.warn('[AIVA Voice] Watchdog triggered: command processing exceeded 8s limit, resetting concurrency lock.');
+          isProcessingRef.current = false;
+          aivaVoiceService.setState('IDLE');
+          setFaceState('IDLE');
+          scheduleDormancy(2500);
+        }
+      }, 8000);
+
       try {
         const parsed = parseAivaVoiceCommand(clean);
 
@@ -238,6 +251,7 @@ export default function MobileHomeScreen() {
         setLastResponseText(fallback);
         await speakResponse(fallback);
       } finally {
+        clearTimeout(watchdog);
         isProcessingRef.current = false;
       }
     },
@@ -283,6 +297,12 @@ export default function MobileHomeScreen() {
       } else if (state === 'SPEAKING') {
         setFaceState('SPEAKING');
       } else if (state === 'INTERRUPTED') {
+        setFaceState('IDLE');
+      } else if (state === 'ERROR') {
+        setFaceState('IDLE');
+        scheduleDormancy(3000);
+      } else if (state === 'DORMANT') {
+        setPresenceState('DORMANT');
         setFaceState('IDLE');
       } else if (state === 'IDLE') {
         if (!isProcessingRef.current) {

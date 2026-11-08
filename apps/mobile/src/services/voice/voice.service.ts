@@ -17,6 +17,7 @@ const { AivaVoiceModule } = NativeModules;
 const voiceEmitter = AivaVoiceModule ? new NativeEventEmitter(AivaVoiceModule) : null;
 
 export type VoiceState =
+  | 'DORMANT'
   | 'IDLE'
   | 'LISTENING'
   | 'PROCESSING'
@@ -38,13 +39,17 @@ class AivaVoiceService {
   private errorListeners: Array<(error: VoiceError) => void> = [];
   private ttsResolve: (() => void) | null = null;
   private ttsReject: ((err: any) => void) | null = null;
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  private errorRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private listenersAttached: boolean = false;
 
   constructor() {
     this.initNativeListeners();
   }
 
   private initNativeListeners() {
-    if (Platform.OS !== 'android' || !voiceEmitter) return;
+    if (this.listenersAttached || Platform.OS !== 'android' || !voiceEmitter) return;
+    this.listenersAttached = true;
 
     voiceEmitter.addListener('onSpeechReady', () => {
       console.log('[EVIDENCE-2] Listening begins: SpeechRecognizer is ready for speech');
@@ -61,33 +66,46 @@ class AivaVoiceService {
       this.audioLevelListeners.forEach((l) => l(level));
     });
 
-    voiceEmitter.addListener('onSpeechPartialResult', (data: { text: string }) => {
-      if (data?.text) {
-        console.log('[AIVA Voice] Partial transcript:', data.text);
-        this.textListeners.forEach((l) => l(data.text, false));
+    // Handle partial results from both singular and plural event signatures
+    const handlePartial = (data: { text?: string; value?: string[] }) => {
+      const transcript = data?.text || data?.value?.[0] || '';
+      if (transcript) {
+        console.log('[AIVA Voice] Partial transcript:', transcript);
+        this.textListeners.forEach((l) => l(transcript, false));
       }
-    });
+    };
+    voiceEmitter.addListener('onSpeechPartialResult', handlePartial);
+    voiceEmitter.addListener('onSpeechPartialResults', handlePartial);
 
-    voiceEmitter.addListener('onSpeechResult', (data: { text: string; isFinal: boolean }) => {
-      if (data?.text) {
-        console.log('[EVIDENCE-4] Final STT transcript is produced:', data.text);
-        this.textListeners.forEach((l) => l(data.text, true));
+    // Handle final results from both singular and plural event signatures
+    const handleFinal = (data: { text?: string; value?: string[]; isFinal?: boolean }) => {
+      const transcript = (data?.text || data?.value?.[0] || '').trim();
+      if (transcript) {
+        console.log('[EVIDENCE-4] Final STT transcript produced:', transcript);
+        this.textListeners.forEach((l) => l(transcript, true));
       }
-    });
+    };
+    voiceEmitter.addListener('onSpeechResult', handleFinal);
+    voiceEmitter.addListener('onSpeechResults', handleFinal);
 
     voiceEmitter.addListener('onSpeechEnd', () => {
+      console.log('[AIVA Voice] onSpeechEnd received');
       if (this.currentState === 'LISTENING') {
         this.setState('PROCESSING');
       }
     });
 
     voiceEmitter.addListener('onSpeechError', (data: { errorCode: number; errorMessage: string }) => {
+      console.warn('[AIVA Voice] onSpeechError received:', data?.errorMessage, `(code: ${data?.errorCode})`);
       const err: VoiceError = {
-        code: data.errorCode,
-        message: data.errorMessage || 'Speech recognition error',
+        code: data?.errorCode ?? -1,
+        message: data?.errorMessage || 'Speech recognition error',
       };
       this.setState('ERROR');
       this.errorListeners.forEach((l) => l(err));
+
+      // Auto-recover from ERROR back to IDLE after 1200ms so consecutive turns are unblocked
+      this.scheduleErrorRecovery(1200);
     });
 
     voiceEmitter.addListener('onTtsStart', () => {
@@ -96,7 +114,7 @@ class AivaVoiceService {
     });
 
     voiceEmitter.addListener('onTtsDone', () => {
-      console.log('[EVIDENCE-9] TTS finishes successfully');
+      console.log('[EVIDENCE-9] TTS finishes successfully with acoustic settling delay');
       this.setState('IDLE');
       console.log('[EVIDENCE-10] Voice state returns to IDLE');
       if (this.ttsResolve) {
@@ -107,15 +125,18 @@ class AivaVoiceService {
     });
 
     voiceEmitter.addListener('onTtsError', (data: any) => {
+      console.warn('[AIVA Voice] onTtsError received:', data);
       this.setState('ERROR');
       if (this.ttsReject) {
         this.ttsReject(new Error(data?.error || 'TTS Error'));
         this.ttsResolve = null;
         this.ttsReject = null;
       }
+      this.scheduleErrorRecovery(1200);
     });
 
     voiceEmitter.addListener('onInterrupted', () => {
+      console.log('[AIVA Voice] onInterrupted received');
       this.setState('INTERRUPTED');
       if (this.ttsResolve) {
         this.ttsResolve();
@@ -125,6 +146,7 @@ class AivaVoiceService {
     });
 
     voiceEmitter.addListener('onTtsInterrupted', () => {
+      console.log('[AIVA Voice] onTtsInterrupted received');
       this.setState('INTERRUPTED');
       if (this.ttsResolve) {
         this.ttsResolve();
@@ -134,8 +156,49 @@ class AivaVoiceService {
     });
   }
 
+  private scheduleErrorRecovery(delayMs: number = 1200) {
+    if (this.errorRecoveryTimer) clearTimeout(this.errorRecoveryTimer);
+    this.errorRecoveryTimer = setTimeout(() => {
+      if (this.currentState === 'ERROR') {
+        console.log('[AIVA Voice] Auto-recovering state from ERROR to IDLE');
+        this.setState('IDLE');
+      }
+    }, delayMs);
+  }
+
+  private armWatchdog(timeoutMs: number = 8000) {
+    this.disarmWatchdog();
+    this.watchdogTimer = setTimeout(() => {
+      if (this.currentState === 'PROCESSING' || this.currentState === 'SPEAKING') {
+        console.warn(`[AIVA Voice Watchdog] State '${this.currentState}' exceeded ${timeoutMs}ms without completion; force-resetting to IDLE.`);
+        if (this.ttsResolve) {
+          this.ttsResolve();
+          this.ttsResolve = null;
+          this.ttsReject = null;
+        }
+        this.setState('IDLE');
+      }
+    }, timeoutMs);
+  }
+
+  private disarmWatchdog() {
+    if (this.watchdogTimer) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
   setState(state: VoiceState) {
+    if (state === this.currentState) return;
+    console.log(`[AIVA Voice State] ${this.currentState} -> ${state}`);
     this.currentState = state;
+
+    if (state === 'PROCESSING' || state === 'SPEAKING') {
+      this.armWatchdog(8000);
+    } else {
+      this.disarmWatchdog();
+    }
+
     this.stateListeners.forEach((l) => l(state));
   }
 
@@ -154,6 +217,7 @@ class AivaVoiceService {
         this.errorListeners.forEach((l) =>
           l({ code: 'START_ERROR', message: err?.message || 'Could not start microphone STT' })
         );
+        this.scheduleErrorRecovery(1200);
         return false;
       }
     }
@@ -164,7 +228,6 @@ class AivaVoiceService {
     if (Platform.OS === 'android' && AivaVoiceModule) {
       try {
         await AivaVoiceModule.stopListening();
-    try { this.speechRecognizer?.cancel(); } catch (e) {}
         return true;
       } catch (err) {
         return false;
@@ -187,11 +250,12 @@ class AivaVoiceService {
   }
 
   /**
-   * Speak text aloud through device speaker using native TTS
+   * Speak text aloud through device speaker using native TTS with bounded safety timeout
    */
   speak(text: string): Promise<void> {
     return new Promise(async (resolve, reject) => {
-      if (!text || !text.trim()) {
+      const clean = text?.trim();
+      if (!clean) {
         resolve();
         return;
       }
@@ -202,12 +266,25 @@ class AivaVoiceService {
         this.ttsReject = reject;
         this.setState('SPEAKING');
 
+        // Bounded 15s max safety timer on TTS resolution
+        const safetyTimer = setTimeout(() => {
+          if (this.ttsResolve === resolve) {
+            console.warn('[AIVA Voice] Speak safety timeout triggered after 15s');
+            this.ttsResolve = null;
+            this.ttsReject = null;
+            this.setState('IDLE');
+            resolve();
+          }
+        }, 15000);
+
         try {
-          await AivaVoiceModule.speak(text, this.currentUtteranceId);
+          await AivaVoiceModule.speak(clean, this.currentUtteranceId);
         } catch (err) {
+          clearTimeout(safetyTimer);
           this.setState('ERROR');
           this.ttsResolve = null;
           this.ttsReject = null;
+          this.scheduleErrorRecovery(1200);
           reject(err);
         }
       } else {
@@ -324,4 +401,3 @@ class AivaVoiceService {
 }
 
 export const aivaVoiceService = new AivaVoiceService();
-

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -25,8 +26,10 @@ import java.util.Locale
  * AivaVoiceModule
  *
  * Full Native Android Voice Pipeline:
- * - Real-time STT using native SpeechRecognizer
+ * - Real-time STT using native SpeechRecognizer with clean recreate/destroy per session
  * - Native TTS playback with natural voice synthesis and utterance progression
+ * - Acoustic settling window (400ms) ensuring zero mic feedback loop after TTS completion
+ * - Clean main-thread lifecycle releasing all audio handles and preventing multi-turn drops
  * - Instant barge-in interruption: stops TTS and captures new speech on the fly
  * - Safe microphone resource coordination with AivaWakeWordForegroundService
  */
@@ -36,6 +39,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     companion object {
         private const val TAG = "AivaVoiceModule"
         const val MODULE_NAME = "AivaVoiceModule"
+        private const val ACOUSTIC_SETTLING_DELAY_MS = 400L
     }
 
     override fun getName(): String = MODULE_NAME
@@ -46,17 +50,14 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     private var isTtsInitialized = false
     private var isListening = false
     private var isSpeaking = false
+    private var lastTtsEndTime: Long = 0L
 
     init {
         mainHandler.post {
             try {
                 tts = TextToSpeech(reactContext, this)
-                if (SpeechRecognizer.isRecognitionAvailable(reactContext)) {
-                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(reactContext)
-                    Log.i(TAG, "SpeechRecognizer pre-warmed and initialized on main thread")
-                }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to instantiate TextToSpeech or SpeechRecognizer: ${e.message}")
+                Log.e(TAG, "Failed to instantiate TextToSpeech: ${e.message}")
             }
         }
     }
@@ -111,30 +112,45 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
-                val params = Arguments.createMap().apply {
-                    putString("utteranceId", utteranceId ?: "")
-                }
-                sendEvent("onTtsDone", params)
+                lastTtsEndTime = SystemClock.uptimeMillis()
+                Log.i(TAG, "TTS onDone($utteranceId): applying 400ms acoustic settling window")
+
+                // Mandatory 400ms acoustic settling delay before emitting onTtsDone and resuming wake word
+                mainHandler.postDelayed({
+                    resumeWakeWordService()
+                    val params = Arguments.createMap().apply {
+                        putString("utteranceId", utteranceId ?: "")
+                    }
+                    sendEvent("onTtsDone", params)
+                }, ACOUSTIC_SETTLING_DELAY_MS)
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 isSpeaking = false
-                val params = Arguments.createMap().apply {
-                    putString("utteranceId", utteranceId ?: "")
-                    putString("error", "TTS synthesis playback error")
-                }
-                sendEvent("onTtsError", params)
+                lastTtsEndTime = SystemClock.uptimeMillis()
+                mainHandler.postDelayed({
+                    resumeWakeWordService()
+                    val params = Arguments.createMap().apply {
+                        putString("utteranceId", utteranceId ?: "")
+                        putString("error", "TTS synthesis playback error")
+                    }
+                    sendEvent("onTtsError", params)
+                }, ACOUSTIC_SETTLING_DELAY_MS)
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
                 isSpeaking = false
-                val params = Arguments.createMap().apply {
-                    putString("utteranceId", utteranceId ?: "")
-                    putInt("errorCode", errorCode)
-                    putString("error", "TTS playback failed with code $errorCode")
-                }
-                sendEvent("onTtsError", params)
+                lastTtsEndTime = SystemClock.uptimeMillis()
+                mainHandler.postDelayed({
+                    resumeWakeWordService()
+                    val params = Arguments.createMap().apply {
+                        putString("utteranceId", utteranceId ?: "")
+                        putInt("errorCode", errorCode)
+                        putString("error", "TTS playback failed with code $errorCode")
+                    }
+                    sendEvent("onTtsError", params)
+                }, ACOUSTIC_SETTLING_DELAY_MS)
             }
         })
     }
@@ -175,129 +191,194 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             return
         }
 
-        // Interrupt TTS if currently playing (Barge-In)
-        if (isSpeaking) {
-            tts?.stop()
-            isSpeaking = false
-            sendEvent("onInterrupted", Arguments.createMap().apply {
-                putString("reason", "speech_detected_during_tts")
-            })
-        }
-
         mainHandler.post {
             try {
-                pauseWakeWordService()
+                var delayMs = 0L
 
-                if (speechRecognizer == null) {
-                    if (!SpeechRecognizer.isRecognitionAvailable(reactContext)) {
-                        resumeWakeWordService()
-                        promise.reject("UNAVAILABLE", "Android SpeechRecognizer is not available on this device")
-                        return@post
+                // If TTS is currently speaking, halt playback cleanly to release audio focus
+                if (isSpeaking || (tts != null && tts!!.isSpeaking)) {
+                    Log.i(TAG, "startListening called while TTS is speaking: stopping TTS and waiting 400ms settling delay")
+                    tts?.stop()
+                    isSpeaking = false
+                    lastTtsEndTime = SystemClock.uptimeMillis()
+                    sendEvent("onInterrupted", Arguments.createMap().apply {
+                        putString("reason", "speech_detected_during_tts")
+                    })
+                    delayMs = ACOUSTIC_SETTLING_DELAY_MS
+                } else {
+                    val timeSinceTts = SystemClock.uptimeMillis() - lastTtsEndTime
+                    if (timeSinceTts < ACOUSTIC_SETTLING_DELAY_MS) {
+                        delayMs = ACOUSTIC_SETTLING_DELAY_MS - timeSinceTts
+                        Log.i(TAG, "startListening called within settling window: delaying start by ${delayMs}ms")
                     }
-                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(reactContext)
                 }
 
-                speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        isListening = true
-                        Log.i(TAG, "SpeechRecognizer: onReadyForSpeech - listening begins")
-                        sendEvent("onSpeechReady", Arguments.createMap())
-                    }
-
-                    override fun onBeginningOfSpeech() {
-                        Log.i(TAG, "SpeechRecognizer: onBeginningOfSpeech - speech detected")
-                        sendEvent("onSpeechStart", Arguments.createMap())
-                    }
-
-                    override fun onRmsChanged(rmsdB: Float) {
-                        // Map rmsdB (-2.0 to ~10.0 dB) to normalized 0.0 - 1.0 audio level
-                        val normalized = ((rmsdB + 2.0f) / 12.0f).coerceIn(0.0f, 1.0f)
-                        val params = Arguments.createMap().apply {
-                            putDouble("audioLevel", normalized.toDouble())
-                        }
-                        sendEvent("onSpeechRms", params)
-                    }
-
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-
-                    override fun onEndOfSpeech() {
-                        isListening = false
-                        sendEvent("onSpeechEnd", Arguments.createMap())
-                    }
-
-                    override fun onError(error: Int) {
-                        isListening = false
-                        resumeWakeWordService()
-
-                        val errorMsg = when (error) {
-                            SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-                            SpeechRecognizer.ERROR_CLIENT -> "Client error"
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
-                            SpeechRecognizer.ERROR_NETWORK -> "Network error"
-                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-                            SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
-                            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognition service busy"
-                            SpeechRecognizer.ERROR_SERVER -> "Server error"
-                            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input timeout"
-                            else -> "Speech recognition error ($error)"
-                        }
-
-                        val params = Arguments.createMap().apply {
-                            putInt("errorCode", error)
-                            putString("errorMessage", errorMsg)
-                        }
-                        sendEvent("onSpeechError", params)
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        isListening = false
-                        resumeWakeWordService()
-
-                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val text = matches?.firstOrNull() ?: ""
-                        Log.i(TAG, "SpeechRecognizer: onResults final transcript: '$text', all matches: $matches")
-
-                        val params = Arguments.createMap().apply {
-                            putString("text", text)
-                            putBoolean("isFinal", true)
-                        }
-                        sendEvent("onSpeechResult", params)
-                    }
-
-                    override fun onPartialResults(partialResults: Bundle?) {
-                        val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val text = matches?.firstOrNull() ?: ""
-                        Log.i(TAG, "SpeechRecognizer: onPartialResults: '$text'")
-
-                        val params = Arguments.createMap().apply {
-                            putString("text", text)
-                        }
-                        sendEvent("onSpeechPartialResult", params)
-                    }
-
-                    override fun onEvent(eventType: Int, params: Bundle?) {}
-                })
-
-                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, reactContext.packageName)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, language ?: "en-US")
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language ?: "en-US")
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                }
-
-                speechRecognizer?.startListening(intent)
-                promise.resolve(true)
+                mainHandler.postDelayed({
+                    executeStartListening(language, promise)
+                }, delayMs)
 
             } catch (e: Exception) {
                 isListening = false
                 resumeWakeWordService()
-                promise.reject("START_ERROR", "Failed to start speech recognition: ${e.message}")
+                promise.reject("START_ERROR", "Failed to prepare speech recognition: ${e.message}")
             }
+        }
+    }
+
+    private fun executeStartListening(language: String?, promise: Promise) {
+        try {
+            pauseWakeWordService()
+
+            // Ensure previous SpeechRecognizer is destroyed to release audio buffers cleanly
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error destroying prior speechRecognizer: ${e.message}")
+            }
+            speechRecognizer = null
+
+            if (!SpeechRecognizer.isRecognitionAvailable(reactContext)) {
+                resumeWakeWordService()
+                promise.reject("UNAVAILABLE", "Android SpeechRecognizer is not available on this device")
+                return
+            }
+
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(reactContext)
+
+            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    isListening = true
+                    Log.i(TAG, "SpeechRecognizer: onReadyForSpeech - listening begins")
+                    sendEvent("onSpeechReady", Arguments.createMap())
+                }
+
+                override fun onBeginningOfSpeech() {
+                    Log.i(TAG, "SpeechRecognizer: onBeginningOfSpeech - speech detected")
+                    sendEvent("onSpeechStart", Arguments.createMap())
+                }
+
+                override fun onRmsChanged(rmsdB: Float) {
+                    val normalized = ((rmsdB + 2.0f) / 12.0f).coerceIn(0.0f, 1.0f)
+                    val params = Arguments.createMap().apply {
+                        putDouble("audioLevel", normalized.toDouble())
+                    }
+                    sendEvent("onSpeechRms", params)
+                }
+
+                override fun onBufferReceived(buffer: ByteArray?) {}
+
+                override fun onEndOfSpeech() {
+                    isListening = false
+                    Log.i(TAG, "SpeechRecognizer: onEndOfSpeech")
+                    sendEvent("onSpeechEnd", Arguments.createMap())
+                }
+
+                override fun onError(error: Int) {
+                    isListening = false
+                    resumeWakeWordService()
+
+                    val errorMsg = when (error) {
+                        SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                        SpeechRecognizer.ERROR_CLIENT -> "Client error"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+                        SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                        SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognition service busy"
+                        SpeechRecognizer.ERROR_SERVER -> "Server error"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input timeout"
+                        else -> "Speech recognition error ($error)"
+                    }
+
+                    Log.w(TAG, "SpeechRecognizer onError: code=$error ($errorMsg)")
+                    val params = Arguments.createMap().apply {
+                        putInt("errorCode", error)
+                        putString("errorMessage", errorMsg)
+                    }
+                    sendEvent("onSpeechError", params)
+                    sendEvent("onSpeechEnd", Arguments.createMap())
+
+                    mainHandler.post {
+                        try {
+                            speechRecognizer?.destroy()
+                            speechRecognizer = null
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error destroying speechRecognizer on error: ${e.message}")
+                        }
+                    }
+                }
+
+                override fun onResults(results: Bundle?) {
+                    isListening = false
+                    resumeWakeWordService()
+
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = matches?.firstOrNull() ?: ""
+                    Log.i(TAG, "SpeechRecognizer: onResults final transcript: '$text', all matches: $matches")
+
+                    val matchesArray = Arguments.createArray()
+                    matches?.forEach { matchesArray.pushString(it) }
+
+                    val resultsParams = Arguments.createMap().apply {
+                        putArray("value", matchesArray)
+                        putString("text", text)
+                        putBoolean("isFinal", true)
+                    }
+
+                    // Explicitly emit both onSpeechResults and onSpeechEnd as required
+                    sendEvent("onSpeechResults", resultsParams)
+                    sendEvent("onSpeechResult", resultsParams)
+                    sendEvent("onSpeechEnd", Arguments.createMap())
+
+                    mainHandler.post {
+                        try {
+                            speechRecognizer?.destroy()
+                            speechRecognizer = null
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Error destroying speechRecognizer on results: ${e.message}")
+                        }
+                    }
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    val text = matches?.firstOrNull() ?: ""
+                    Log.i(TAG, "SpeechRecognizer: onPartialResults: '$text'")
+
+                    val matchesArray = Arguments.createArray()
+                    matches?.forEach { matchesArray.pushString(it) }
+
+                    val params = Arguments.createMap().apply {
+                        putArray("value", matchesArray)
+                        putString("text", text)
+                    }
+                    sendEvent("onSpeechPartialResults", params)
+                    sendEvent("onSpeechPartialResult", params)
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, reactContext.packageName)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, language ?: "en-US")
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language ?: "en-US")
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            }
+
+            speechRecognizer?.startListening(intent)
+            promise.resolve(true)
+
+        } catch (e: Exception) {
+            isListening = false
+            resumeWakeWordService()
+            promise.reject("START_ERROR", "Failed to start speech recognition: ${e.message}")
         }
     }
 
@@ -320,6 +401,8 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         mainHandler.post {
             try {
                 speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
                 isListening = false
                 resumeWakeWordService()
                 promise.resolve(true)
@@ -363,6 +446,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             try {
                 tts?.stop()
                 isSpeaking = false
+                lastTtsEndTime = SystemClock.uptimeMillis()
                 sendEvent("onTtsInterrupted", Arguments.createMap())
                 promise.resolve(true)
             } catch (e: Exception) {
@@ -375,9 +459,10 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     fun bargeIn(promise: Promise) {
         mainHandler.post {
             try {
-                if (isSpeaking) {
+                if (isSpeaking || (tts != null && tts!!.isSpeaking)) {
                     tts?.stop()
                     isSpeaking = false
+                    lastTtsEndTime = SystemClock.uptimeMillis()
                     sendEvent("onInterrupted", Arguments.createMap().apply {
                         putString("reason", "user_barge_in")
                     })
@@ -450,5 +535,3 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         }
     }
 }
-
-
