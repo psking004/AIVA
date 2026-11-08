@@ -237,26 +237,33 @@ export default function MobileHomeScreen() {
           return;
         }
 
-        // Local Android App Launch Intent Check (e.g., "Open Instagram", "Launch Spotify", "Open Camera")
-        const appLaunchPattern = /^(?:open|launch|start)\s+(?:the\s+)?([a-zA-Z0-9_\s]+)$/i;
-        const appMatch = appLaunchPattern.exec(clean);
-        if (appMatch && appMatch[1]) {
-          const targetAppName = appMatch[1].trim();
-          const internalHorizons = ['tasks', 'projects', 'memory', 'system', 'coding'];
-          if (!internalHorizons.includes(targetAppName.toLowerCase())) {
-            console.log(`[AIVA Voice] Local Android app launch recognized: "${targetAppName}"`);
-            clearTimeout(watchdog);
-            const launched = await aivaVoiceService.launchApp(targetAppName);
-            const appResponse = launched
-              ? `Opening ${targetAppName}.`
-              : `I couldn't find ${targetAppName} installed on this device.`;
-            setLastResponseText(appResponse);
-            await speakResponse(appResponse);
-            return;
+        // 1. Check if command targets desktop workstation (e.g. "Open VS Code on PC-B", "Launch Chrome on PC-A")
+        const isDesktopTarget =
+          /\b(on|in|at)\s+(pc-?a|pc-?b|desktop|workstation|computer)\b/i.test(clean) ||
+          /\b(pc-?a|pc-?b)\b/i.test(clean);
+
+        // 2. Local Android App Launch Intent Check (only for local mobile actions, e.g. "Open Instagram", "Open YouTube")
+        if (!isDesktopTarget) {
+          const appLaunchPattern = /^(?:open|launch|start)\s+(?:the\s+)?([a-zA-Z0-9_\s]+)$/i;
+          const appMatch = appLaunchPattern.exec(clean);
+          if (appMatch && appMatch[1]) {
+            const targetAppName = appMatch[1].trim();
+            const internalHorizons = ['tasks', 'projects', 'memory', 'system', 'coding'];
+            if (!internalHorizons.includes(targetAppName.toLowerCase())) {
+              console.log(`[AIVA Voice] Local Android app launch recognized: "${targetAppName}"`);
+              clearTimeout(watchdog);
+              const launched = await aivaVoiceService.launchApp(targetAppName);
+              const appResponse = launched
+                ? `Opening ${targetAppName}.`
+                : `I couldn't find ${targetAppName} installed on this device.`;
+              setLastResponseText(appResponse);
+              await speakResponse(appResponse);
+              return;
+            }
           }
         }
 
-        // Tri-Node Remote Execution Intent Check (PC-A & PC-B)
+        // 3. Tri-Node Remote Execution Intent Check (PC-A & PC-B)
         const remoteIntent = remoteExecService.detectRemoteExecutionIntent(clean);
         if (remoteIntent) {
           console.log('[AIVA Voice] Remote execution intent recognized:', remoteIntent);

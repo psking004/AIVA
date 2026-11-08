@@ -11,12 +11,13 @@ import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
 
 export type NodeTarget = 'PC-A' | 'PC-B' | 'CLOUD';
-export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC';
+export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP';
 
 export interface RemoteExecIntent {
   isRemoteExec: boolean;
   targetNode: NodeTarget;
   action: ExecAction;
+  application?: string;
   command?: string;
   query: string;
 }
@@ -39,6 +40,22 @@ export class RemoteExecService {
   public detectRemoteExecutionIntent(text: string): RemoteExecIntent | null {
     const clean = text.trim().toLowerCase();
     if (!clean) return null;
+
+    // 1. Workstation desktop app launch (e.g. "Open VS Code on PC-B", "Launch Chrome on PC-A", "Open Blender on PC-B")
+    const desktopAppPattern = /^(?:open|launch|start)\s+([a-zA-Z0-9_\s]+?)\s+(?:on|in|at)\s+(pc-?a|pc-?b|desktop|workstation|computer)$/i;
+    const desktopMatch = desktopAppPattern.exec(clean);
+    if (desktopMatch) {
+      const appName = desktopMatch[1].trim();
+      const targetStr = desktopMatch[2].toLowerCase();
+      const targetNode: NodeTarget = /pc-?a|pca/i.test(targetStr) ? 'PC-A' : 'PC-B';
+      return {
+        isRemoteExec: true,
+        targetNode,
+        action: 'LAUNCH_APP',
+        application: appName,
+        query: text.trim(),
+      };
+    }
 
     const hasPcA = /\b(pc-?a|pca|gpu|3050|rtx)\b/i.test(clean);
     const hasPcB = /\b(pc-?b|pcb|desktop|host|workstation)\b/i.test(clean);
@@ -109,6 +126,7 @@ export class RemoteExecService {
         {
           target: intent.targetNode,
           action: intent.action,
+          application: intent.application || '',
           query: intent.query,
           command: intent.command || '',
         },
@@ -134,15 +152,32 @@ export class RemoteExecService {
 
     // 2. Cloud Fabric fallback via /ai/remote/execute
     try {
+      const capability =
+        intent.action === 'LAUNCH_APP'
+          ? 'REMOTE_APP_CONTROL'
+          : intent.action === 'STATUS'
+          ? 'REMOTE_CODING_INSPECT'
+          : 'REMOTE_CODING_VERIFY';
+      const capabilityLevel =
+        intent.action === 'LAUNCH_APP'
+          ? 3
+          : intent.action === 'STATUS'
+          ? 0
+          : 1;
+
       const cloudRes = await axios.post(
         `${aivaClient.getBaseUrl()}/ai/remote/execute`,
         {
           requestId: `req_remote_${Date.now()}`,
           sourceDeviceId: aivaClient.getDeviceId(),
           targetNodeId: intent.targetNode,
-          capability: intent.action === 'STATUS' ? 'REMOTE_CODING_INSPECT' : 'REMOTE_CODING_VERIFY',
-          capabilityLevel: intent.action === 'STATUS' ? 0 : 1,
-          arguments: { query: intent.query },
+          capability,
+          capabilityLevel,
+          arguments: {
+            query: intent.query,
+            application: intent.application || intent.command || 'terminal',
+            action: 'OPEN',
+          },
           createdAt: Date.now(),
           expiresAt: Date.now() + 30000,
         },
@@ -161,7 +196,7 @@ export class RemoteExecService {
         return {
           success: true,
           node: intent.targetNode,
-          spokenResponse: `${intent.targetNode} capability executed via Cloud Fabric. System status is operational.`,
+          spokenResponse: `${intent.targetNode} capability executed via Cloud Fabric. ${result?.message || 'Operation succeeded.'}`,
           raw: result,
         };
       }
@@ -170,6 +205,14 @@ export class RemoteExecService {
     }
 
     // 3. Graceful offline fallback
+    if (intent.action === 'LAUNCH_APP') {
+      return {
+        success: false,
+        node: intent.targetNode,
+        spokenResponse: `${intent.targetNode} workstation is currently offline on the local network. Cannot launch ${intent.application || 'application'}.`,
+      };
+    }
+
     if (intent.targetNode === 'PC-A') {
       return {
         success: false,

@@ -523,7 +523,30 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                 }
             }
 
-            // 3. Fallback: Search installed packages by label
+            // 3. Fallback: Search launchable apps via queryIntentActivities & label
+            if (intent == null) {
+                val launcherIntent = Intent(Intent.ACTION_MAIN, null).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                }
+                val resolveInfos = pm.queryIntentActivities(launcherIntent, 0)
+                for (info in resolveInfos) {
+                    val label = info.loadLabel(pm).toString()
+                    val pkg = info.activityInfo.packageName
+                    val cleanQuery = appNameOrPackage.lowercase().replace(" ", "")
+                    if (label.equals(appNameOrPackage, ignoreCase = true) ||
+                        label.contains(appNameOrPackage, ignoreCase = true) ||
+                        pkg.lowercase().contains(cleanQuery)) {
+                        val candidate = pm.getLaunchIntentForPackage(pkg)
+                        if (candidate != null) {
+                            targetPackage = pkg
+                            intent = candidate
+                            break
+                        }
+                    }
+                }
+            }
+
+            // 4. Fallback: Search all installed applications
             if (intent == null) {
                 val installed = pm.getInstalledApplications(PackageManager.GET_META_DATA)
                 for (info in installed) {

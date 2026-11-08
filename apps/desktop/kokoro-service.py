@@ -65,6 +65,29 @@ def init_engine():
         sys.stderr.write(f"[KOKORO TTS] Initialization error: {e}\n")
         return False
 
+def resolve_desktop_app_command(app_name):
+    clean = app_name.lower().strip()
+    mapping = {
+        "vs code": "code",
+        "vscode": "code",
+        "code": "code",
+        "chrome": "chrome",
+        "google chrome": "chrome",
+        "browser": "chrome",
+        "terminal": "wt",
+        "powershell": "powershell",
+        "cmd": "cmd",
+        "blender": "blender",
+        "notepad": "notepad",
+        "explorer": "explorer",
+        "files": "explorer",
+        "spotify": "spotify",
+        "edge": "msedge",
+        "calculator": "calc",
+        "calc": "calc"
+    }
+    return mapping.get(clean, clean)
+
 class KokoroHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"[KOKORO TTS] {format % args}\n")
@@ -203,9 +226,46 @@ class KokoroHandler(BaseHTTPRequestHandler):
             action = str(data.get("action", "STATUS")).upper()
             query = str(data.get("query", ""))
             command = str(data.get("command", ""))
+            application = str(data.get("application", "")).strip()
 
-            sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, query='{query}'\n")
+            sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, app='{application}', query='{query}'\n")
 
+            # Route for desktop application launching (PC-A & PC-B)
+            if action in ("LAUNCH_APP", "LAUNCH", "OPEN_APP") or (action == "EXEC" and application):
+                app_target = resolve_desktop_app_command(application or command or query)
+                if "PC-A" in target or "PCA" in target or "194" in target:
+                    import socket
+                    pca_ip = "10.84.73.194"
+                    winrm_up = False
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.settimeout(1.2)
+                        s.connect((pca_ip, 5985))
+                        s.close()
+                        winrm_up = True
+                    except Exception:
+                        pass
+
+                    if winrm_up:
+                        try:
+                            import subprocess
+                            subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ Start-Process '{app_target}' }}\"", shell=True, timeout=5)
+                            spoken = f"Launching {application or app_target} on PC-A power workstation."
+                            res_data = {"success": True, "node": "PC-A", "application": app_target, "spokenResponse": spoken}
+                        except Exception as e:
+                            res_data = {"success": False, "node": "PC-A", "error": str(e), "spokenResponse": f"Failed to dispatch launch on PC-A: {str(e)}"}
+                    else:
+                        spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot launch {application or app_target} until PC-A is awake."
+                        res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
+                else:
+                    # Launch on PC-B
+                    import subprocess
+                    try:
+                        subprocess.Popen(f"start {app_target}", shell=True)
+                        spoken = f"Opening {application or app_target} on PC-B host workstation."
+                        res_data = {"success": True, "node": "PC-B", "application": app_target, "spokenResponse": spoken}
+                    except Exception as e:
+                        res_data = {"success": False, "node": "PC-B", "error": str(e), "spokenResponse": f"Failed to launch {app_target} on PC-B: {str(e)}"}
             # Route for PC-A target
             if "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():
                 import socket
