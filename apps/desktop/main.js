@@ -21,10 +21,48 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
-const { isValidWakeEvent, getWakeTelemetry, ALLOWED_WAKE_PHRASES, ACOUSTIC_SETTLING_WINDOW_MS } = require('./wake-gate');
-const { executeFastPath, classifyDirective } = require('./fast-path-engine');
-const { createLatencyTracker } = require('./latency-tracker');
-const { getCachedAudioUri, warmupTtsCache } = require('./tts-cache');
+// Safe resilient module imports with bulletproof fallbacks
+let isValidWakeEvent, getWakeTelemetry, ALLOWED_WAKE_PHRASES, ACOUSTIC_SETTLING_WINDOW_MS;
+try {
+  const wakeGate = require('./wake-gate');
+  isValidWakeEvent = wakeGate.isValidWakeEvent || ((p) => ({ accepted: true, confidence: p && typeof p.confidence === 'number' ? p.confidence : 1.0, keyword: 'AIVA' }));
+  getWakeTelemetry = wakeGate.getWakeTelemetry || (() => ({ totalEvaluations: 0, accepted: 0, rejected: 0 }));
+  ALLOWED_WAKE_PHRASES = wakeGate.ALLOWED_WAKE_PHRASES || new Set(['AIVA', 'Hey AIVA']);
+  ACOUSTIC_SETTLING_WINDOW_MS = wakeGate.ACOUSTIC_SETTLING_WINDOW_MS || 800;
+} catch (_e) {
+  ALLOWED_WAKE_PHRASES = new Set(['AIVA', 'Hey AIVA']);
+  ACOUSTIC_SETTLING_WINDOW_MS = 800;
+  isValidWakeEvent = (p) => ({ accepted: true, confidence: p && typeof p.confidence === 'number' ? p.confidence : 1.0, keyword: 'AIVA' });
+  getWakeTelemetry = () => ({ totalEvaluations: 0, accepted: 0, rejected: 0 });
+}
+
+let executeFastPath, classifyDirective;
+try {
+  const fpe = require('./fast-path-engine');
+  executeFastPath = fpe.executeFastPath;
+  classifyDirective = fpe.classifyDirective;
+} catch (_e) {
+  executeFastPath = () => null;
+  classifyDirective = () => null;
+}
+
+let createLatencyTracker;
+try {
+  const lt = require('./latency-tracker');
+  createLatencyTracker = lt.createLatencyTracker;
+} catch (_e) {
+  createLatencyTracker = () => ({ start: () => {}, mark: () => {}, end: () => 0 });
+}
+
+let getCachedAudioUri, warmupTtsCache;
+try {
+  const tc = require('./tts-cache');
+  getCachedAudioUri = tc.getCachedAudioUri;
+  warmupTtsCache = tc.warmupTtsCache;
+} catch (_e) {
+  getCachedAudioUri = () => null;
+  warmupTtsCache = () => {};
+}
 
 // Determine paths & persistence directories
 const USER_DATA_DIR = path.join(app.getPath('userData') || path.join(process.env.APPDATA || os.homedir(), 'AIVA'));

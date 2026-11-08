@@ -41,7 +41,7 @@
                                       "output":  "dist"
                                   },
                   "files":  [
-                                "main.js",
+                                "*.js",
                                 "preload.js",
                                 "speech-listener.ps1",
                                 "kokoro-service.py",

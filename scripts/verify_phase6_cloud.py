@@ -40,10 +40,10 @@ conv_id = f"conv_phase6_mem_{int(time.time())}"
 print(f"Conversation ID: {conv_id}")
 
 # Turn 1: Store memory
-print("\n[Turn 1: Store Production Port]")
+print("\n[Turn 1: Store Production Database Pooler Port]")
 t0 = time.time()
 p1 = json.dumps({
-    'message': 'Remember my production deployment port is 6543.',
+    'message': 'Remember my production database pooler port is 6543.',
     'conversationId': conv_id,
     'strategy': 'gemini-only'
 }).encode('utf-8')
