@@ -165,6 +165,8 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun startListening(language: String?, promise: Promise) {
+    // Prevent SODA engine premature EOF collision
+    const RECOGNIZER_COOLDOWN_MS = 600;
         val hasPermission = ContextCompat.checkSelfPermission(
             reactContext,
             android.Manifest.permission.RECORD_AUDIO
@@ -447,3 +449,4 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         }
     }
 }
+

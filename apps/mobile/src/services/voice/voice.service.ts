@@ -164,6 +164,7 @@ class AivaVoiceService {
     if (Platform.OS === 'android' && AivaVoiceModule) {
       try {
         await AivaVoiceModule.stopListening();
+    try { this.speechRecognizer?.cancel(); } catch (e) {}
         return true;
       } catch (err) {
         return false;
@@ -323,3 +324,4 @@ class AivaVoiceService {
 }
 
 export const aivaVoiceService = new AivaVoiceService();
+
