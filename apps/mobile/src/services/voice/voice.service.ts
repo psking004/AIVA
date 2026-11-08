@@ -389,6 +389,19 @@ class AivaVoiceService {
     return { accessToken: null, refreshToken: null };
   }
 
+  async launchApp(appNameOrPackage: string): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.launchApp) {
+      try {
+        await AivaVoiceModule.launchApp(appNameOrPackage);
+        return true;
+      } catch (err: any) {
+        console.warn(`[AIVA Voice] Failed to launch app "${appNameOrPackage}":`, err?.message);
+        return false;
+      }
+    }
+    return false;
+  }
+
   subscribeState(listener: (state: VoiceState) => void) {
     this.stateListeners.push(listener);
     return () => {

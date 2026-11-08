@@ -57,7 +57,7 @@ export class RemoteExecService {
       hasPcA ||
       hasPcB ||
       (hasStatus && (hasPcGeneric || clean.includes('pc') || clean.includes('system') || clean.includes('fabric'))) ||
-      ((hasBuild || hasTest || hasRun || hasCode) && (hasPcGeneric || hasPcB || hasPcA || clean.includes('app') || clean.includes('mobile')));
+      ((hasBuild || hasTest || hasRun || hasCode) && (hasPcGeneric || hasPcB || hasPcA || hasTest || hasBuild || clean.includes('app') || clean.includes('mobile') || clean.includes('script')));
 
     if (isRemoteIntent) {
       let targetNode: NodeTarget = 'PC-B';

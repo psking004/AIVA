@@ -487,6 +487,71 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun launchApp(appNameOrPackage: String, promise: Promise) {
+        try {
+            val pm = reactContext.packageManager
+            var targetPackage = appNameOrPackage.trim()
+
+            // 1. Direct package check
+            var intent = pm.getLaunchIntentForPackage(targetPackage)
+
+            // 2. Common application name mapping
+            if (intent == null) {
+                val commonMap = mapOf(
+                    "instagram" to "com.instagram.android",
+                    "youtube" to "com.google.android.youtube",
+                    "whatsapp" to "com.whatsapp",
+                    "spotify" to "com.spotify.music",
+                    "chrome" to "com.android.chrome",
+                    "maps" to "com.google.android.apps.maps",
+                    "google maps" to "com.google.android.apps.maps",
+                    "twitter" to "com.twitter.android",
+                    "x" to "com.twitter.android",
+                    "telegram" to "org.telegram.messenger",
+                    "settings" to "com.android.settings",
+                    "camera" to "com.android.camera",
+                    "calculator" to "com.google.android.calculator",
+                    "gmail" to "com.google.android.gm",
+                    "photos" to "com.google.android.apps.photos",
+                    "play store" to "com.android.vending",
+                    "music" to "com.spotify.music"
+                )
+                val mapped = commonMap[targetPackage.lowercase()]
+                if (mapped != null) {
+                    targetPackage = mapped
+                    intent = pm.getLaunchIntentForPackage(targetPackage)
+                }
+            }
+
+            // 3. Fallback: Search installed packages by label
+            if (intent == null) {
+                val installed = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                for (info in installed) {
+                    val label = pm.getApplicationLabel(info).toString()
+                    if (label.equals(appNameOrPackage, ignoreCase = true) || label.contains(appNameOrPackage, ignoreCase = true)) {
+                        val candidate = pm.getLaunchIntentForPackage(info.packageName)
+                        if (candidate != null) {
+                            targetPackage = info.packageName
+                            intent = candidate
+                            break
+                        }
+                    }
+                }
+            }
+
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                reactContext.startActivity(intent)
+                promise.resolve(targetPackage)
+            } else {
+                promise.reject("APP_NOT_FOUND", "Package or app '$appNameOrPackage' is not installed on this device.")
+            }
+        } catch (e: Exception) {
+            promise.reject("LAUNCH_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
     fun getVoiceState(promise: Promise) {
         val map = Arguments.createMap().apply {
             putBoolean("isListening", isListening)
