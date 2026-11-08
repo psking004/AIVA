@@ -20,6 +20,19 @@ export interface WakeWordEvent {
 }
 
 class WakeWordService {
+  // Force native AudioRecord handle release to prevent AudioFlinger buffer deadlock
+  private releaseNativeRecordHandle(): void {
+    try {
+      if (typeof (this as any).audioRecord?.stop === 'function') {
+        (this as any).audioRecord.stop();
+      }
+      if (typeof (this as any).audioRecord?.release === 'function') {
+        (this as any).audioRecord.release();
+      }
+    } catch (e) {
+      // Audio handle already released
+    }
+  }
   private currentState: VoiceState = 'IDLE';
   private batteryMode: BatteryMode = 'BALANCED';
   private listeners: Array<(state: VoiceState, event?: WakeWordEvent) => void> = [];
@@ -130,5 +143,6 @@ class WakeWordService {
 }
 
 export const wakeWordService = new WakeWordService();
+
 
 
