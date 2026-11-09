@@ -278,21 +278,22 @@ export default function MobileHomeScreen() {
                 : `I couldn't find ${targetAppName} installed on this device.`;
 
               if (noteAction.content) {
-                try {
-                  await aivaClient.createNote({
-                    title: noteAction.title,
-                    content: noteAction.content,
-                  });
-                  appResponse = `Opening ${targetAppName}. Created note.`;
-                } catch (noteErr) {
-                  console.warn('[AIVA Voice] Note save error:', noteErr);
-                  appResponse = `Opening ${targetAppName}.`;
-                }
+                // 1. Instantly trigger native Android Notes app with populated text (offline-first)
                 try {
                   await aivaVoiceService.createNoteWithText(noteAction.content, 'com.vivo.notes');
                 } catch {
                   await aivaVoiceService.launchApp(targetAppName);
                 }
+
+                // 2. Fire-and-forget backend sync in background (do NOT await, avoid 401 stall)
+                aivaClient.createNote({
+                  title: noteAction.title,
+                  content: noteAction.content,
+                }).catch((noteErr) => {
+                  console.warn('[AIVA Voice] Background cloud note sync skipped/failed (401 or offline):', noteErr?.message || noteErr);
+                });
+
+                appResponse = `Opening ${targetAppName}. Created note.`;
               } else if (launchCmd.followUpAction) {
                 appResponse = `Opening ${targetAppName}.`;
               }
@@ -323,22 +324,24 @@ export default function MobileHomeScreen() {
 
           const noteContent = notePayload || "New Note";
 
-          // 1. Persist asynchronously to backend/local store
-          try {
-            await aivaClient.createNote({
-              title: noteContent.slice(0, 30),
-              content: noteContent,
-            });
-          } catch (err) {
-            console.warn('[AIVA Notes] DB sync skipped/warning:', err);
-          }
-
-          // 2. Open native Notes app with populated text
+          // 1. Instantly trigger native Android Notes app with populated text (offline-first)
           try {
             await aivaVoiceService.createNoteWithText(noteContent, 'com.vivo.notes');
           } catch (err) {
-            await aivaVoiceService.launchApp('com.vivo.notes');
+            try {
+              await aivaVoiceService.launchApp('com.vivo.notes');
+            } catch (e) {
+              console.warn('[AIVA Notes] Failed to open native notes app:', e);
+            }
           }
+
+          // 2. Fire-and-forget backend sync in background (do NOT await, avoid 401 stall)
+          aivaClient.createNote({
+            title: noteContent.slice(0, 30),
+            content: noteContent,
+          }).catch((err) => {
+            console.warn('[AIVA Notes] Background cloud sync skipped/failed (401 or offline):', err?.message || err);
+          });
 
           const spoken = 'Created note and opened Notes.';
           setLastResponseText(spoken);

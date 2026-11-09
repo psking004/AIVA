@@ -246,9 +246,10 @@ try {
 
     Write-Host "  Verifying PC-A remote file presence (SMB share, WinRM, workspace mirror)..."
     $remoteSharePath = "\\${PcaHost}\AIVA_Workspace\test_harness_pca.py"
+    $adminSharePath = "\\${PcaHost}\C$\AIVA_Workspace\test_harness_pca.py"
     $stagedMirrorPath = "C:\AIVA_Workspace\pca\test_harness_pca.py"
 
-    $smbExists = Test-Path $remoteSharePath -ErrorAction SilentlyContinue
+    $smbExists = (Test-Path $remoteSharePath -ErrorAction SilentlyContinue) -or (Test-Path $adminSharePath -ErrorAction SilentlyContinue)
     $mirrorExists = Test-Path $stagedMirrorPath -ErrorAction SilentlyContinue
 
     Write-Host "  -> PC-A Physical Network Share Status: $smbExists"

@@ -278,7 +278,23 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         sys.stderr.write(f"[CREATE_FILE] Local staging error: {le}\n")
 
                     # 2. Non-blocking asynchronous SMB share and WinRM creation attempts
+                    def ensure_pca_connection():
+                        try:
+                            proc = subprocess.run("net use", shell=True, capture_output=True, text=True, timeout=3)
+                            if "10.84.73.194" in proc.stdout:
+                                return True
+                            cmd = r"net use \\10.84.73.194\C$ /user:alpha AivaWinRM2025!"
+                            p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+                            if p.returncode == 0:
+                                return True
+                            cmd2 = r"net use \\10.84.73.194\AIVA_Workspace"
+                            p2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=5)
+                            return p2.returncode == 0
+                        except Exception:
+                            return False
+
                     def async_pca_create(f_name):
+                        ensure_pca_connection()
                         # Attempt writing across the direct physical network share: \\10.84.73.194\AIVA_Workspace
                         try:
                             remote_target_path = os.path.join(pca_share, f_name)
@@ -292,12 +308,13 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         # Fallback 1: Admin share
                         try:
                             admin_share = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
+                            os.makedirs(os.path.dirname(admin_share), exist_ok=True)
                             with open(admin_share, "w", encoding="utf-8") as af:
                                 af.write("")
                             sys.stderr.write(f"[CREATE_FILE] Successfully created file via admin SMB: {admin_share}\n")
                             return
-                        except Exception:
-                            pass
+                        except Exception as adm_err:
+                            sys.stderr.write(f"[CREATE_FILE] Admin SMB write note: {adm_err}\n")
 
                         # Fallback 2: WinRM command
                         try:
@@ -391,6 +408,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     if target_node == "PC-A":
                         # 1. Asynchronous SMB append attempt
                         def async_pca_append(f_name, txt):
+                            ensure_pca_connection()
                             try:
                                 smb_path = os.path.join(r"\\10.84.73.194\AIVA_Workspace", f_name)
                                 with open(smb_path, "a", encoding="utf-8") as sf:
