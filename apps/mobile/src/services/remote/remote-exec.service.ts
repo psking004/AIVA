@@ -11,12 +11,12 @@ import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
 
 export type NodeTarget = 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'BOOT_OLLAMA';
+export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA';
 
 export interface RemoteExecIntent {
   isRemoteExec: boolean;
   targetNode: 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE';
+  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE';
   application?: string;
   command?: string;
   query: string;
@@ -139,10 +139,14 @@ const PCB_LOCAL_DAEMON = 'http://10.84.73.59:5050/api/remote-exec';
  */
 export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
   const clean = query.trim().replace(/[.,!?;:]+$/, '');
-  // 1. Phonetic Normalization (Ollama variants: bhoot, alama, olama, llama)
+  // 1. Phonetic Normalization (Ollama variants, BCA/TCA transcription errors, and STT file artifacts)
   const normalized = clean
+    .toLowerCase()
     .replace(/\b(?:bhoot|boot|activate|start|turn\s*on)\s+(?:allama|alama|olama|llama)\b/i, 'boot ollama')
-    .replace(/\b(?:allama|alama|olama|llama)\b/i, 'ollama');
+    .replace(/\b(?:allama|alama|olama|llama)\b/i, 'ollama')
+    .replace(/\b(?:bca|tca)\b/gi, 'PCA')
+    .replace(/\b([a-z0-9_\-]+)\s+dot\s+py\b/gi, '$1.py')
+    .replace(/\b([a-z0-9_\-]+)\s+(?:buy|by|pie)\b/gi, '$1.py');
 
   // 2. Extract Location Qualifiers (on, in, at, for, of)
   const locationRegex = /\b(?:on|in|at|for|of)\s+(pc[\s\-]?a|pc[\s\-]?b|pc|workstation|desktop|phone|mobile)\b/i;
@@ -160,13 +164,13 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     strippedQuery = normalized.replace(locationRegex, '').trim();
   }
 
-  // Fallback explicit node detection if preposition was omitted (e.g. "status of PC-A", "check PC-B")
+  // Fallback explicit node detection if preposition was omitted (e.g. "status of PC-A", "check PC-B", "open test.py PCA")
   if (targetNode === 'MOBILE') {
     if (/\b(pc[\s\-]?a|pca)\b/i.test(normalized)) targetNode = 'PC-A';
     else if (/\b(pc[\s\-]?b|pcb)\b/i.test(normalized)) targetNode = 'PC-B';
   }
 
-  // 3. Match Boot / Start Ollama Directive (Phonetically normalized)
+  // 1. BOOT OLLAMA
   if (/\b(?:boot|start|turn\s*on|activate|run)\s+ollama\b/i.test(strippedQuery) || /\bboot\s+ollama\b/i.test(normalized)) {
     return {
       isRemoteExec: true,
@@ -177,12 +181,28 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 4. Match File Creation & Code Directives (Prioritized before STATUS to prevent greedy lock)
-  const fileCreateRegex = /(?:create|make|write|generate|touch)\s+(?:a\s+)?([a-z0-9_\-\.]+\s+(?:file|script)|python\s+file|script)\s*(?:named|called)?\s*([a-z0-9_\-\.]+)?/i;
+  // 2. OPEN FILE (e.g. "open test.py in PCA", "open test buy in PCA", "view script.py on PC-B")
+  const openFileRegex = /\b(?:open|view|edit)\s+([a-z0-9_\-\.\s]+(?:\.py|\.js|\.ts|\.txt|\.ps1|\.json|\.md)?)\b/i;
+  const openMatch = strippedQuery.match(openFileRegex);
+  if (openMatch && (openMatch[1].includes('.') || openMatch[1].includes('test') || openMatch[1].includes('script') || openMatch[1].includes('file'))) {
+    let fileName = openMatch[1].trim().replace(/\s+buy\b/gi, '');
+    if (!fileName.includes('.')) fileName += '.py';
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-A' : targetNode,
+      action: 'OPEN_FILE',
+      command: fileName,
+      query: clean,
+    };
+  }
+
+  // 3. CREATE FILE (e.g. "create a Python file called test.py in PCA", "create test buy in PCA")
+  const fileCreateRegex = /(?:create|make|write|generate|touch)\s+(?:a\s+)?(?:python\s+file|script|file)?\s*(?:called|named)?\s*([a-z0-9_\-\.]+)?/i;
   const fileMatch = strippedQuery.match(fileCreateRegex);
-  if (fileMatch) {
-    const rawFileName = fileMatch[2] || (fileMatch[1].toLowerCase().includes('python') ? 'script.py' : 'file.txt');
-    const fileName = rawFileName.includes('.') ? rawFileName : `${rawFileName}.py`;
+  if (fileMatch && (fileMatch[1] || strippedQuery.includes('file') || strippedQuery.includes('script'))) {
+    let rawFileName = fileMatch[1] || 'workspace_script.py';
+    rawFileName = rawFileName.replace(/\s+buy\b/gi, '').trim();
+    const fileName = rawFileName.endsWith('.py') || rawFileName.includes('.') ? rawFileName : `${rawFileName}.py`;
     return {
       isRemoteExec: true,
       targetNode: targetNode === 'MOBILE' ? 'PC-A' : targetNode, // Default coding/scripts to PC-A
@@ -192,7 +212,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 5. Match General Script / Terminal Execution
+  // 4. GENERAL SCRIPT / TERMINAL EXECUTION
   if (/^(?:run|execute|eval|exec)\s+(.+)/i.test(strippedQuery)) {
     return {
       isRemoteExec: true,
@@ -203,7 +223,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 6. Match App Launching on Workstations
+  // 5. APP LAUNCHING ON WORKSTATIONS
   const launchMatch = strippedQuery.match(/^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+)$/i);
   if (launchMatch && targetNode !== 'MOBILE') {
     return {
@@ -215,7 +235,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 7. Match Status Checks (Strict, avoids swallowing coding tasks)
+  // 6. STATUS CHECKS (Strict, avoids swallowing coding/file tasks)
   if (/\b(?:status|health|ping|check|how\s+is)\b/i.test(strippedQuery) && targetNode !== 'MOBILE') {
     return {
       isRemoteExec: true,
@@ -282,13 +302,13 @@ export class RemoteExecService {
     // 2. Cloud Fabric fallback via /ai/remote/execute
     try {
       const capability =
-        intent.action === 'LAUNCH_APP'
+        intent.action === 'LAUNCH_APP' || intent.action === 'OPEN_FILE'
           ? 'REMOTE_APP_CONTROL'
           : intent.action === 'STATUS'
           ? 'REMOTE_CODING_INSPECT'
           : 'REMOTE_CODING_VERIFY';
       const capabilityLevel =
-        intent.action === 'LAUNCH_APP'
+        intent.action === 'LAUNCH_APP' || intent.action === 'OPEN_FILE'
           ? 3
           : intent.action === 'STATUS'
           ? 0
@@ -334,11 +354,11 @@ export class RemoteExecService {
     }
 
     // 3. Graceful offline fallback
-    if (intent.action === 'LAUNCH_APP') {
+    if (intent.action === 'LAUNCH_APP' || intent.action === 'OPEN_FILE') {
       return {
         success: false,
         node: intent.targetNode,
-        spokenResponse: `${intent.targetNode} workstation is currently offline on the local network. Cannot launch ${intent.application || 'application'}.`,
+        spokenResponse: `${intent.targetNode} workstation is currently offline on the local network. Cannot ${intent.action === 'OPEN_FILE' ? 'open file ' + (intent.command || '') : 'launch ' + (intent.application || 'application')}.`,
       };
     }
 

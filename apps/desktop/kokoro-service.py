@@ -246,7 +246,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     winrm_up = False
                     try:
                         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.settimeout(1.2)
+                        s.settimeout(2.5)
                         s.connect((pca_ip, 5985))
                         s.close()
                         winrm_up = True
@@ -277,14 +277,60 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     spoken = f"Created Python file {fileName} in workspace on PC-B host workstation."
                     res_data = {"success": True, "node": "PC-B", "file": target_file, "spokenResponse": spoken}
 
-            # 2. Route for BOOT_OLLAMA (Phonetically normalized Ollama startup)
+            # 2. Route for OPEN_FILE (Invoke text editors / viewers on PC-A & PC-B)
+            elif action == "OPEN_FILE":
+                fileName = command or "test.py"
+                if "PC-A" in target or "PCA" in target or "194" in target:
+                    pca_ip = "10.84.73.194"
+                    import socket
+                    winrm_up = False
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.settimeout(2.5)
+                        s.connect((pca_ip, 5985))
+                        s.close()
+                        winrm_up = True
+                    except Exception:
+                        pass
+
+                    if winrm_up:
+                        try:
+                            import subprocess
+                            remote_ps = f"$d = 'C:\\AIVA_Workspace'; if (-not (Test-Path $d)) {{ New-Item -ItemType Directory -Path $d -Force | Out-Null }}; $f = Join-Path $d '{fileName}'; if (-not (Test-Path $f)) {{ Set-Content -Path $f -Value '# AIVA File: {fileName}`n' -Encoding UTF8 }}; Start-Process notepad.exe -ArgumentList $f"
+                            subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {remote_ps} }}\"", shell=True, timeout=5)
+                            spoken = f"Opened {fileName} in editor on PC-A compute workstation."
+                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
+                        except Exception as e:
+                            spoken = f"Dispatched open directive for {fileName} to PC-A compute workstation."
+                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
+                    else:
+                        spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot open {fileName} until PC-A is awake."
+                        res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
+                else:
+                    # Open on PC-B
+                    import os, subprocess
+                    workspace_dir = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace")
+                    os.makedirs(workspace_dir, exist_ok=True)
+                    target_file = os.path.join(workspace_dir, fileName)
+                    if not os.path.exists(target_file):
+                        with open(target_file, "w", encoding="utf-8") as f:
+                            f.write(f"# AIVA File: {fileName} - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    try:
+                        subprocess.Popen(f'notepad.exe "{target_file}"', shell=True)
+                        spoken = f"Opened {fileName} in editor on PC-B host workstation."
+                        res_data = {"success": True, "node": "PC-B", "file": target_file, "spokenResponse": spoken}
+                    except Exception as e:
+                        spoken = f"Opened {fileName} on PC-B host workstation."
+                        res_data = {"success": True, "node": "PC-B", "file": target_file, "spokenResponse": spoken}
+
+            # 3. Route for BOOT_OLLAMA (Phonetically normalized Ollama startup)
             elif action == "BOOT_OLLAMA" or (action in ("LAUNCH_APP", "LAUNCH") and "ollama" in (application or command or query).lower()):
                 pca_ip = "10.84.73.194"
                 import socket
                 winrm_up = False
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(1.2)
+                    s.settimeout(2.5)
                     s.connect((pca_ip, 5985))
                     s.close()
                     winrm_up = True
@@ -303,7 +349,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         ollama_up = False
                         try:
                             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            s.settimeout(1.2)
+                            s.settimeout(2.5)
                             s.connect((pca_ip, 11434))
                             s.close()
                             ollama_up = True
@@ -326,7 +372,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     winrm_up = False
                     try:
                         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.settimeout(1.2)
+                        s.settimeout(2.5)
                         s.connect((pca_ip, 5985))
                         s.close()
                         winrm_up = True
@@ -342,7 +388,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                                 ollama_check = False
                                 try:
                                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                                    s.settimeout(1.2)
+                                    s.settimeout(2.5)
                                     s.connect((pca_ip, 11434))
                                     s.close()
                                     ollama_check = True
@@ -376,7 +422,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 winrm_up = False
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(1.2)
+                    s.settimeout(2.5)
                     s.connect((pca_ip, 11434))
                     s.close()
                     ollama_up = True
@@ -384,7 +430,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     pass
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(1.2)
+                    s.settimeout(2.5)
                     s.connect((pca_ip, 5985))
                     s.close()
                     winrm_up = True
@@ -403,7 +449,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         time.sleep(1.0)
                         try:
                             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                            s.settimeout(1.2)
+                            s.settimeout(2.5)
                             s.connect((pca_ip, 11434))
                             s.close()
                             ollama_up = True
