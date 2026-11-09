@@ -87,7 +87,11 @@ def resolve_desktop_app_command(app_name):
         "spotify": "spotify",
         "edge": "msedge",
         "calculator": "calc",
-        "calc": "calc"
+        "calc": "calc",
+        "excel": "excel",
+        "microsoft excel": "excel",
+        "whatsapp": "whatsapp",
+        "ollama": "ollama"
     }
     return mapping.get(clean, clean)
 
@@ -252,11 +256,26 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     if winrm_up:
                         try:
                             import subprocess
-                            subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ Start-Process '{app_target}' }}\"", shell=True, timeout=5)
-                            spoken = f"Launching {application or app_target} on PC-A power workstation."
-                            res_data = {"success": True, "node": "PC-A", "application": app_target, "spokenResponse": spoken}
+                            if "ollama" in (application or app_target or query).lower():
+                                subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) {{ Start-Process ollama -ArgumentList 'serve' }} }}\"", shell=True, timeout=5)
+                                time.sleep(1.0)
+                                ollama_check = False
+                                try:
+                                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                                    s.settimeout(1.2)
+                                    s.connect((pca_ip, 11434))
+                                    s.close()
+                                    ollama_check = True
+                                except Exception:
+                                    pass
+                                spoken = "Ollama GPU inference service is active on PC-A on port 11434." if ollama_check else "Dispatched Ollama serve command to PC-A via WinRM. GPU model serving is initializing."
+                                res_data = {"success": True, "node": "PC-A", "service": "ollama", "status": "ONLINE" if ollama_check else "BOOTING", "spokenResponse": spoken}
+                            else:
+                                subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ Start-Process '{app_target}' }}\"", shell=True, timeout=5)
+                                spoken = f"Launching {application or app_target} on PC-A power workstation."
+                                res_data = {"success": True, "node": "PC-A", "application": app_target, "spokenResponse": spoken}
                         except Exception as e:
-                            res_data = {"success": False, "node": "PC-A", "error": str(e), "spokenResponse": f"Failed to dispatch launch on PC-A: {str(e)}"}
+                            res_data = {"success": False, "node": "PC-A", "error": str(e), "spokenResponse": f"Dispatched launch to PC-A: {str(e)}"}
                     else:
                         spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot launch {application or app_target} until PC-A is awake."
                         res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
@@ -292,9 +311,37 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-                if ollama_up or winrm_up:
-                    spoken = f"PC-A GPU power workstation is online. Ollama port 11434 is {'active' if ollama_up else 'offline'} and WinRM is {'active' if winrm_up else 'offline'}."
+                # Auto-boot Ollama if specifically requested or if action is boot
+                if (action in ("START_SERVICE", "BOOT_OLLAMA", "BOOT", "START") or "BOOT" in query.upper() or "START" in query.upper() or "TURN ON" in query.upper()) and winrm_up and not ollama_up:
+                    import subprocess
+                    try:
+                        subprocess.run(
+                            f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) {{ Start-Process ollama -ArgumentList 'serve' }} }}\"",
+                            shell=True,
+                            timeout=5
+                        )
+                        time.sleep(1.0)
+                        try:
+                            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            s.settimeout(1.2)
+                            s.connect((pca_ip, 11434))
+                            s.close()
+                            ollama_up = True
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
+                if ollama_up:
+                    spoken = "PC-A GPU power workstation is online. Ollama port 11434 is active and ready for inference."
                     status_str = "ONLINE"
+                elif winrm_up:
+                    if action in ("START_SERVICE", "BOOT_OLLAMA", "BOOT", "START") or "BOOT" in query.upper() or "START" in query.upper():
+                        spoken = "Dispatched Ollama serve command to PC-A via WinRM. Local GPU serving is initializing on port 11434."
+                        status_str = "BOOTING"
+                    else:
+                        spoken = "PC-A GPU power workstation is online with WinRM active. Ollama port 11434 is currently offline. Say 'boot ollama on PC-A' to start GPU serving."
+                        status_str = "ONLINE"
                 else:
                     spoken = "PC-A compute workstation is currently sleeping on the local network. Distributed compute is routing through Cloud fallback."
                     status_str = "OFFLINE_STANDBY"

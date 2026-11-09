@@ -90,18 +90,15 @@ export function parseAivaVoiceCommand(rawText: string): AivaParsedCommand {
     };
   }
 
-  // 2. Tasks Horizon
-  if (
-    text.includes('task') ||
-    text.includes('tasks') ||
-    text.includes('todo') ||
-    text.includes('action items') ||
-    text.includes('show my tasks') ||
-    text.includes('open my tasks') ||
-    text.includes('what are my tasks') ||
-    text.includes('show tasks') ||
-    text.includes('open tasks')
-  ) {
+  // 2. Tasks Horizon (Explicit UI summoning only)
+  const isSummonTasks =
+    /^(?:open|show|view|display|switch to)\s+(?:my\s+)?(?:task\s+protocols?|tasks?|todo|action items)$/i.test(text) ||
+    text === 'what are my tasks' ||
+    text === 'show tasks' ||
+    text === 'open tasks' ||
+    text === 'task protocols';
+
+  if (isSummonTasks) {
     return {
       rawText,
       intent: 'SUMMON_UI',
@@ -111,16 +108,14 @@ export function parseAivaVoiceCommand(rawText: string): AivaParsedCommand {
     };
   }
 
-  // 3. Projects Horizon
-  if (
-    text.includes('project') ||
-    text.includes('projects') ||
-    text.includes('initiatives') ||
-    text.includes('show my projects') ||
-    text.includes('open projects') ||
-    text.includes('open my projects') ||
-    text.includes('what projects am i working on')
-  ) {
+  // 3. Projects Horizon (Explicit UI summoning only)
+  const isSummonProjects =
+    /^(?:open|show|view|display|switch to)\s+(?:my\s+)?(?:projects?|initiatives?|initiative matrix)$/i.test(text) ||
+    text === 'what projects am i working on' ||
+    text === 'show projects' ||
+    text === 'open projects';
+
+  if (isSummonProjects) {
     return {
       rawText,
       intent: 'SUMMON_UI',
@@ -130,18 +125,15 @@ export function parseAivaVoiceCommand(rawText: string): AivaParsedCommand {
     };
   }
 
-  // 4. Memory Horizon
-  if (
-    text.includes('memory') ||
-    text.includes('memories') ||
-    text.includes('remember') ||
-    text.includes('recall') ||
-    text.includes('show memory') ||
-    text.includes('show my memory') ||
-    text.includes('open memory') ||
-    text.includes('what do you remember') ||
-    text.includes('search my memory')
-  ) {
+  // 4. Memory Horizon (Explicit UI summoning only)
+  const isSummonMemory =
+    /^(?:open|show|view|display|switch to)\s+(?:my\s+)?(?:memory|memories|memory archive)$/i.test(text) ||
+    text === 'what do you remember' ||
+    text === 'search my memory' ||
+    text === 'show memory' ||
+    text === 'open memory';
+
+  if (isSummonMemory) {
     return {
       rawText,
       intent: 'SUMMON_UI',
@@ -151,18 +143,19 @@ export function parseAivaVoiceCommand(rawText: string): AivaParsedCommand {
     };
   }
 
-  // 5. Timeline / Calendar Horizon
-  if (
-    text.includes('timeline') ||
-    text.includes('schedule') ||
-    text.includes('calendar') ||
-    text.includes('history') ||
-    text.includes('show my timeline') ||
-    text.includes('open timeline') ||
-    text.includes('show my calendar') ||
-    text.includes('what is on my calendar') ||
-    text.includes('what do i have today')
-  ) {
+  // 5. Timeline / Calendar Horizon (Explicit UI summoning only)
+  const isSummonTimeline =
+    /^(?:open|show|view|display|switch to)\s+(?:my\s+)?(?:timeline|calendar|schedule)$/i.test(text) ||
+    text === 'what is on my calendar' ||
+    text === 'what do i have today' ||
+    text === 'open timeline' ||
+    text === 'show timeline' ||
+    text === 'open calendar' ||
+    text === 'show calendar' ||
+    text === 'open schedule' ||
+    text === 'show schedule';
+
+  if (isSummonTimeline) {
     return {
       rawText,
       intent: 'SUMMON_UI',
@@ -172,15 +165,14 @@ export function parseAivaVoiceCommand(rawText: string): AivaParsedCommand {
     };
   }
 
-  // 6. Data Storage / Files Horizon
-  if (
-    text.includes('file') ||
-    text.includes('files') ||
-    text.includes('documents') ||
-    text.includes('storage') ||
-    text.includes('show my files') ||
-    text.includes('open files')
-  ) {
+  // 6. Data Storage / Files Horizon (Explicit UI summoning only)
+  const isSummonFiles =
+    /^(?:open|show|view|display|switch to)\s+(?:my\s+)?(?:files?|documents?|storage)$/i.test(text) ||
+    text === 'show files' ||
+    text === 'open files' ||
+    text === 'show documents';
+
+  if (isSummonFiles) {
     return {
       rawText,
       intent: 'SUMMON_UI',

@@ -35,34 +35,40 @@ export interface ParsedLaunchCommand {
 export function parseLaunchIntent(query: string): ParsedLaunchCommand {
   const clean = query.trim().replace(/[.,!?;:]+$/, '');
 
-  // Pattern: Matches "open/launch/start/switch to <app> [and/then/to/with/write/create <action>] [on <pc-a/pc-b>]"
-  const regex = /^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+?)(?:\s+(?:and|then|to|with)\s+|\s*,\s*|\s+(?:write|create|take|note down)\s+)(.+)$/i;
-  const simpleRegex = /^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+)$/i;
+  // Match location: on / in / at / for PC-A, PC-B, PC, Workstation, Desktop, Phone, Mobile
+  const locationRegex = /\b(?:on|in|at|for)\s+(pc[\s\-]?a|pc[\s\-]?b|pc|workstation|desktop|phone|mobile)\b/i;
+  const locMatch = clean.match(locationRegex);
+
+  let targetNode: 'MOBILE' | 'PC-A' | 'PC-B' = 'MOBILE';
+  let strippedQuery = clean;
+
+  if (locMatch) {
+    const loc = locMatch[1].toLowerCase().replace(/[\s\-]/g, '');
+    if (loc.includes('pca')) targetNode = 'PC-A';
+    else if (loc.includes('pcb') || loc === 'pc' || loc.includes('workstation') || loc.includes('desktop')) targetNode = 'PC-B';
+    else if (loc.includes('phone') || loc.includes('mobile')) targetNode = 'MOBILE';
+
+    strippedQuery = clean.replace(locationRegex, '').trim();
+  }
+
+  // Compound vs simple launcher matching on strippedQuery
+  const compoundRegex = /^(?:open|launch|start|switch to|turn on|boot|run)\s+([a-z0-9\s_-]+?)(?:\s+(?:and|then|to|with)\s+|\s*,\s*|\s+(?:write|create|take|note down)\s+)(.+)$/i;
+  const simpleRegex = /^(?:open|launch|start|switch to|turn on|boot|run)\s+([a-z0-9\s_-]+)$/i;
 
   let appRaw = '';
   let actionRaw = '';
 
-  const compoundMatch = clean.match(regex);
+  const compoundMatch = strippedQuery.match(compoundRegex);
   if (compoundMatch) {
     appRaw = compoundMatch[1].trim();
     actionRaw = compoundMatch[2].trim();
   } else {
-    const simpleMatch = clean.match(simpleRegex);
+    const simpleMatch = strippedQuery.match(simpleRegex);
     if (simpleMatch) {
       appRaw = simpleMatch[1].trim();
     } else {
-      return { isAppLaunch: false, appName: '', targetNode: 'MOBILE' };
+      return { isAppLaunch: false, appName: '', targetNode };
     }
-  }
-
-  // Detect if targeted to workstation
-  let targetNode: 'MOBILE' | 'PC-A' | 'PC-B' = 'MOBILE';
-  if (/\bon\s+(?:pc-?a|compute)\b/i.test(clean)) {
-    targetNode = 'PC-A';
-    appRaw = appRaw.replace(/\s+on\s+(?:pc-?a|compute)/i, '').trim();
-  } else if (/\bon\s+(?:pc-?b|pc|workstation|desktop)\b/i.test(clean)) {
-    targetNode = 'PC-B';
-    appRaw = appRaw.replace(/\s+on\s+(?:pc-?b|pc|workstation|desktop)/i, '').trim();
   }
 
   // Strip leading 'the ' if present (e.g. "the notes" -> "notes", "the camera" -> "camera")
@@ -151,26 +157,29 @@ export class RemoteExecService {
 
     const hasPcA = /\b(pc-?a|pca|gpu|3050|rtx)\b/i.test(clean);
     const hasPcB = /\b(pc-?b|pcb|desktop|host|workstation)\b/i.test(clean);
+    const hasOllama = /\b(ollama|llama|gpu daemon)\b/i.test(clean);
     const hasPcGeneric = /\b(pc|computer|system|laptop|workstation|rig|machine|nodes?)\b/i.test(clean);
     const hasBuild = /\b(build|compile|gradle|assemble)\b/i.test(clean);
     const hasTest = /\b(test|typecheck|lint|verify)\b/i.test(clean);
     const hasCode = /\b(code|generate code|refactor|script)\b/i.test(clean);
-    const hasRun = /\b(run|exec|execute|start task)\b/i.test(clean);
+    const hasRun = /\b(run|exec|execute|start task|boot|start service)\b/i.test(clean);
     const hasStatus = /\b(status|check|health|ping|probe|info|state|diagnostic|how is)\b/i.test(clean);
 
     // If query matches tri-node execution patterns:
     // 1. Mentions PC-A or PC-B specifically
-    // 2. Asks for status/check of PC, computer, system, nodes (e.g. "status of PC", "check my pc", "system status")
-    // 3. Build, test, run, or code commands
+    // 2. Mentions Ollama service
+    // 3. Asks for status/check of PC, computer, system, nodes (e.g. "status of PC", "check my pc", "system status")
+    // 4. Build, test, run, or code commands
     const isRemoteIntent =
       hasPcA ||
       hasPcB ||
+      hasOllama ||
       (hasStatus && (hasPcGeneric || clean.includes('pc') || clean.includes('system') || clean.includes('fabric'))) ||
       ((hasBuild || hasTest || hasRun || hasCode) && (hasPcGeneric || hasPcB || hasPcA || hasTest || hasBuild || clean.includes('app') || clean.includes('mobile') || clean.includes('script')));
 
     if (isRemoteIntent) {
       let targetNode: NodeTarget = 'PC-B';
-      if (hasPcA || (clean.includes('gpu') && !hasPcB)) {
+      if (hasPcA || hasOllama || (clean.includes('gpu') && !hasPcB)) {
         targetNode = 'PC-A';
       } else {
         targetNode = 'PC-B';
@@ -178,8 +187,12 @@ export class RemoteExecService {
 
       let action: ExecAction = 'STATUS';
       let command: string | undefined;
+      let application: string | undefined;
 
-      if (hasBuild) {
+      if (hasOllama && (clean.includes('start') || clean.includes('boot') || clean.includes('run') || clean.includes('turn on') || clean.includes('serve'))) {
+        action = 'LAUNCH_APP';
+        application = 'ollama';
+      } else if (hasBuild) {
         action = 'BUILD';
         command = 'cd apps/mobile/android && .\\gradlew.bat --version';
       } else if (hasTest) {
@@ -197,6 +210,7 @@ export class RemoteExecService {
         isRemoteExec: true,
         targetNode,
         action,
+        application,
         command,
         query: text.trim(),
       };

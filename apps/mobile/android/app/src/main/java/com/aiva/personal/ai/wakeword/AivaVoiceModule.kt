@@ -491,11 +491,46 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         try {
             val pm = reactContext.packageManager
             var targetPackage = appNameOrPackage.trim()
+            val cleanLower = targetPackage.lowercase()
 
-            // 1. Direct package check
+            // 1. Sub-feature URI Deep-Link Handling (e.g. Instagram Reels, YouTube Shorts, Stories)
+            val deepLinkMap = mapOf(
+                "reels" to Pair("https://www.instagram.com/reels/", "com.instagram.android"),
+                "instagram reels" to Pair("https://www.instagram.com/reels/", "com.instagram.android"),
+                "insta reels" to Pair("https://www.instagram.com/reels/", "com.instagram.android"),
+                "stories" to Pair("https://www.instagram.com/stories/", "com.instagram.android"),
+                "instagram stories" to Pair("https://www.instagram.com/stories/", "com.instagram.android"),
+                "explore" to Pair("https://www.instagram.com/explore/", "com.instagram.android"),
+                "instagram explore" to Pair("https://www.instagram.com/explore/", "com.instagram.android"),
+                "direct" to Pair("https://www.instagram.com/direct/inbox/", "com.instagram.android"),
+                "instagram direct" to Pair("https://www.instagram.com/direct/inbox/", "com.instagram.android"),
+                "shorts" to Pair("https://www.youtube.com/shorts", "com.google.android.youtube"),
+                "youtube shorts" to Pair("https://www.youtube.com/shorts", "com.google.android.youtube"),
+                "trending" to Pair("https://www.youtube.com/feed/trending", "com.google.android.youtube"),
+                "youtube trending" to Pair("https://www.youtube.com/feed/trending", "com.google.android.youtube"),
+                "subscriptions" to Pair("https://www.youtube.com/feed/subscriptions", "com.google.android.youtube"),
+                "youtube subscriptions" to Pair("https://www.youtube.com/feed/subscriptions", "com.google.android.youtube")
+            )
+
+            val deepLink = deepLinkMap[cleanLower]
+            if (deepLink != null) {
+                val (uriStr, pkg) = deepLink
+                val deepIntent = Intent(Intent.ACTION_VIEW, Uri.parse(uriStr)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    setPackage(pkg)
+                }
+                val launchCheck = pm.getLaunchIntentForPackage(pkg)
+                if (launchCheck != null) {
+                    reactContext.startActivity(deepIntent)
+                    promise.resolve(pkg)
+                    return
+                }
+            }
+
+            // 2. Direct package check
             var intent = pm.getLaunchIntentForPackage(targetPackage)
 
-            // 2. Common application name mapping
+            // 3. Common application name mapping
             if (intent == null) {
                 val commonMap = mapOf(
                     "instagram" to "com.instagram.android",

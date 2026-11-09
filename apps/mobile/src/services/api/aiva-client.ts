@@ -356,6 +356,25 @@ class AivaApiClient {
   }
 
   /**
+   * Create a scheduled task in the user's AIVA task protocols
+   * Route: POST /tasks
+   */
+  async createTask(task: { title: string; description?: string; scheduledFor?: string; status?: string }): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+      const response = await this.client.post('/tasks', {
+        title: task.title,
+        description: task.description || '',
+        status: task.status || 'SCHEDULED',
+        priority: 'MEDIUM',
+      });
+      return { success: true, data: response.data };
+    } catch (error: any) {
+      console.warn('[AIVA Client] createTask failed:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Check cloud backend health
    */
   async checkBackendHealth(): Promise<{ isOnline: boolean; latencyMs?: number }> {

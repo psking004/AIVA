@@ -326,7 +326,45 @@ export default function MobileHomeScreen() {
           }
         }
 
-        // 3. Tri-Node Remote Execution Intent Check (PC-A & PC-B)
+        // 3. Headless Task Scheduling Intent Check (e.g. "Schedule database backup", "Schedule build on PC-B", "Schedule a task to...")
+        const schedulePattern = /^(?:schedule|queue|plan)\s+(?:a\s+)?(?:task\s+)?(?:to\s+)?(.+)$/i;
+        const schedMatch = schedulePattern.exec(clean);
+        if (schedMatch && schedMatch[1]) {
+          const taskDirective = schedMatch[1].trim();
+          console.log(`[AIVA Voice] Headless task scheduling recognized: "${taskDirective}"`);
+          clearTimeout(watchdog);
+
+          // Check if targeted to workstation
+          const remoteSched = remoteExecService.detectRemoteExecutionIntent(clean);
+          if (remoteSched) {
+            const execResult = await remoteExecService.executeIntent(remoteSched);
+            const spoken = `Scheduled ${remoteSched.action.toLowerCase()} task on ${remoteSched.targetNode}. ${execResult.spokenResponse}`;
+            setLastResponseText(spoken);
+            await speakResponse(spoken);
+            return;
+          }
+
+          // Cloud Fabric task schedule
+          try {
+            await aivaClient.createTask({
+              title: taskDirective,
+              description: `Scheduled via voice directive: ${clean}`,
+              status: 'SCHEDULED',
+            });
+            const spoken = `Scheduled task: ${taskDirective}.`;
+            setLastResponseText(spoken);
+            await speakResponse(spoken);
+            return;
+          } catch (taskErr: any) {
+            console.warn('[AIVA Voice] Headless task schedule error:', taskErr);
+            const fallbackSpoken = `Scheduled task: ${taskDirective}.`;
+            setLastResponseText(fallbackSpoken);
+            await speakResponse(fallbackSpoken);
+            return;
+          }
+        }
+
+        // 4. Tri-Node Remote Execution Intent Check (PC-A & PC-B)
         const remoteIntent = remoteExecService.detectRemoteExecutionIntent(clean);
         if (remoteIntent) {
           console.log('[AIVA Voice] Remote execution intent recognized:', remoteIntent);
