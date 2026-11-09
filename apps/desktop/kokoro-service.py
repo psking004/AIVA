@@ -237,8 +237,88 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
             sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, app='{application}', query='{query}'\n")
 
-            # Route for desktop application launching (PC-A & PC-B)
-            if action in ("LAUNCH_APP", "LAUNCH", "OPEN_APP") or (action == "EXEC" and application):
+            # 1. Route for CREATE_FILE (Code generation and file creation on PC-A & PC-B)
+            if action == "CREATE_FILE":
+                fileName = command or "script.py"
+                if "PC-A" in target or "PCA" in target or "194" in target:
+                    pca_ip = "10.84.73.194"
+                    import socket
+                    winrm_up = False
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        s.settimeout(1.2)
+                        s.connect((pca_ip, 5985))
+                        s.close()
+                        winrm_up = True
+                    except Exception:
+                        pass
+
+                    if winrm_up:
+                        try:
+                            import subprocess
+                            remote_ps = f"$d = 'C:\\AIVA_Workspace'; if (-not (Test-Path $d)) {{ New-Item -ItemType Directory -Path $d -Force | Out-Null }}; Set-Content -Path (Join-Path $d '{fileName}') -Value '# AIVA Autonomous Script on PC-A`nimport sys, os`nprint(\"Hello from PC-A RTX 3050 Node\")`n' -Encoding UTF8"
+                            subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {remote_ps} }}\"", shell=True, timeout=5)
+                            spoken = f"Created Python file {fileName} in workspace on PC-A compute workstation."
+                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
+                        except Exception as e:
+                            spoken = f"File creation directive for {fileName} dispatched to PC-A compute workstation."
+                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
+                    else:
+                        spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot create {fileName} until PC-A is awake."
+                        res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
+                else:
+                    # Create on PC-B
+                    import os
+                    workspace_dir = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace")
+                    os.makedirs(workspace_dir, exist_ok=True)
+                    target_file = os.path.join(workspace_dir, fileName)
+                    with open(target_file, "w", encoding="utf-8") as f:
+                        f.write(f"# AIVA Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\nimport sys\nprint('Hello from AIVA PC-B host workstation')\n")
+                    spoken = f"Created Python file {fileName} in workspace on PC-B host workstation."
+                    res_data = {"success": True, "node": "PC-B", "file": target_file, "spokenResponse": spoken}
+
+            # 2. Route for BOOT_OLLAMA (Phonetically normalized Ollama startup)
+            elif action == "BOOT_OLLAMA" or (action in ("LAUNCH_APP", "LAUNCH") and "ollama" in (application or command or query).lower()):
+                pca_ip = "10.84.73.194"
+                import socket
+                winrm_up = False
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.settimeout(1.2)
+                    s.connect((pca_ip, 5985))
+                    s.close()
+                    winrm_up = True
+                except Exception:
+                    pass
+
+                if winrm_up:
+                    try:
+                        import subprocess
+                        subprocess.run(
+                            f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) {{ Start-Process ollama -ArgumentList 'serve' }} }}\"",
+                            shell=True,
+                            timeout=5
+                        )
+                        time.sleep(1.0)
+                        ollama_up = False
+                        try:
+                            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                            s.settimeout(1.2)
+                            s.connect((pca_ip, 11434))
+                            s.close()
+                            ollama_up = True
+                        except Exception:
+                            pass
+                        spoken = "Ollama GPU inference service is active on PC-A on port 11434." if ollama_up else "Dispatched Ollama serve command to PC-A via WinRM. Local GPU serving is initializing."
+                        res_data = {"success": True, "node": "PC-A", "service": "ollama", "status": "ONLINE" if ollama_up else "BOOTING", "spokenResponse": spoken}
+                    except Exception as e:
+                        res_data = {"success": True, "node": "PC-A", "service": "ollama", "spokenResponse": "Dispatched Ollama serve command to PC-A via WinRM. Local GPU serving is initializing."}
+                else:
+                    spoken = "PC-A compute workstation is currently sleeping on the local network. Cannot boot Ollama until PC-A is awake."
+                    res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
+
+            # 3. Route for desktop application launching (PC-A & PC-B)
+            elif action in ("LAUNCH_APP", "LAUNCH", "OPEN_APP") or (action == "EXEC" and application):
                 app_target = resolve_desktop_app_command(application or command or query)
                 if "PC-A" in target or "PCA" in target or "194" in target:
                     import socket

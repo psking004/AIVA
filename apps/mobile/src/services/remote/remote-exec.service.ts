@@ -10,13 +10,13 @@
 import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
 
-export type NodeTarget = 'PC-A' | 'PC-B' | 'CLOUD';
-export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP';
+export type NodeTarget = 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
+export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'BOOT_OLLAMA';
 
 export interface RemoteExecIntent {
   isRemoteExec: boolean;
-  targetNode: NodeTarget;
-  action: ExecAction;
+  targetNode: 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
+  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE';
   application?: string;
   command?: string;
   query: string;
@@ -134,89 +134,112 @@ export interface RemoteExecResult {
 
 const PCB_LOCAL_DAEMON = 'http://10.84.73.59:5050/api/remote-exec';
 
+/**
+ * Prioritized remote execution intent classification with phonetic normalization
+ */
+export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
+  const clean = query.trim().replace(/[.,!?;:]+$/, '');
+  // 1. Phonetic Normalization (Ollama variants: bhoot, alama, olama, llama)
+  const normalized = clean
+    .replace(/\b(?:bhoot|boot|activate|start|turn\s*on)\s+(?:allama|alama|olama|llama)\b/i, 'boot ollama')
+    .replace(/\b(?:allama|alama|olama|llama)\b/i, 'ollama');
+
+  // 2. Extract Location Qualifiers (on, in, at, for, of)
+  const locationRegex = /\b(?:on|in|at|for|of)\s+(pc[\s\-]?a|pc[\s\-]?b|pc|workstation|desktop|phone|mobile)\b/i;
+  const locMatch = normalized.match(locationRegex);
+
+  let targetNode: 'MOBILE' | 'PC-A' | 'PC-B' = 'MOBILE';
+  let strippedQuery = normalized;
+
+  if (locMatch) {
+    const loc = locMatch[1].toLowerCase().replace(/[\s\-]/g, '');
+    if (loc.includes('pca')) targetNode = 'PC-A';
+    else if (loc.includes('pcb') || loc === 'pc' || loc.includes('workstation') || loc.includes('desktop')) targetNode = 'PC-B';
+    else if (loc.includes('phone') || loc.includes('mobile')) targetNode = 'MOBILE';
+
+    strippedQuery = normalized.replace(locationRegex, '').trim();
+  }
+
+  // Fallback explicit node detection if preposition was omitted (e.g. "status of PC-A", "check PC-B")
+  if (targetNode === 'MOBILE') {
+    if (/\b(pc[\s\-]?a|pca)\b/i.test(normalized)) targetNode = 'PC-A';
+    else if (/\b(pc[\s\-]?b|pcb)\b/i.test(normalized)) targetNode = 'PC-B';
+  }
+
+  // 3. Match Boot / Start Ollama Directive (Phonetically normalized)
+  if (/\b(?:boot|start|turn\s*on|activate|run)\s+ollama\b/i.test(strippedQuery) || /\bboot\s+ollama\b/i.test(normalized)) {
+    return {
+      isRemoteExec: true,
+      targetNode: 'PC-A',
+      action: 'BOOT_OLLAMA',
+      command: 'ollama serve',
+      query: clean,
+    };
+  }
+
+  // 4. Match File Creation & Code Directives (Prioritized before STATUS to prevent greedy lock)
+  const fileCreateRegex = /(?:create|make|write|generate|touch)\s+(?:a\s+)?([a-z0-9_\-\.]+\s+(?:file|script)|python\s+file|script)\s*(?:named|called)?\s*([a-z0-9_\-\.]+)?/i;
+  const fileMatch = strippedQuery.match(fileCreateRegex);
+  if (fileMatch) {
+    const rawFileName = fileMatch[2] || (fileMatch[1].toLowerCase().includes('python') ? 'script.py' : 'file.txt');
+    const fileName = rawFileName.includes('.') ? rawFileName : `${rawFileName}.py`;
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-A' : targetNode, // Default coding/scripts to PC-A
+      action: 'CREATE_FILE',
+      command: fileName,
+      query: clean,
+    };
+  }
+
+  // 5. Match General Script / Terminal Execution
+  if (/^(?:run|execute|eval|exec)\s+(.+)/i.test(strippedQuery)) {
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'EXEC',
+      command: strippedQuery.replace(/^(?:run|execute|eval|exec)\s+/i, '').trim(),
+      query: clean,
+    };
+  }
+
+  // 6. Match App Launching on Workstations
+  const launchMatch = strippedQuery.match(/^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+)$/i);
+  if (launchMatch && targetNode !== 'MOBILE') {
+    return {
+      isRemoteExec: true,
+      targetNode,
+      action: 'LAUNCH_APP',
+      application: launchMatch[1].trim(),
+      query: clean,
+    };
+  }
+
+  // 7. Match Status Checks (Strict, avoids swallowing coding tasks)
+  if (/\b(?:status|health|ping|check|how\s+is)\b/i.test(strippedQuery) && targetNode !== 'MOBILE') {
+    return {
+      isRemoteExec: true,
+      targetNode,
+      action: 'STATUS',
+      query: clean,
+    };
+  }
+
+  return {
+    isRemoteExec: targetNode !== 'MOBILE',
+    targetNode,
+    action: targetNode !== 'MOBILE' ? 'STATUS' : 'LAUNCH_APP',
+    query: clean,
+  };
+}
+
 export class RemoteExecService {
   /**
    * Detect whether a voice prompt matches a cross-node execution intent
    */
   public detectRemoteExecutionIntent(text: string): RemoteExecIntent | null {
-    const clean = text.trim().toLowerCase();
-    if (!clean) return null;
-
-    // 1. Workstation desktop app launch (e.g. "Open VS Code on PC-B", "Launch Chrome on PC-A", "Open Blender on PC-B", "Open notes on PC-B and write buy groceries")
-    const launchCmd = parseLaunchIntent(text);
-    if (launchCmd.isAppLaunch && (launchCmd.targetNode === 'PC-A' || launchCmd.targetNode === 'PC-B')) {
-      return {
-        isRemoteExec: true,
-        targetNode: launchCmd.targetNode,
-        action: 'LAUNCH_APP',
-        application: launchCmd.appName,
-        command: launchCmd.followUpAction,
-        query: text.trim(),
-      };
-    }
-
-    const hasPcA = /\b(pc-?a|pca|gpu|3050|rtx)\b/i.test(clean);
-    const hasPcB = /\b(pc-?b|pcb|desktop|host|workstation)\b/i.test(clean);
-    const hasOllama = /\b(ollama|llama|gpu daemon)\b/i.test(clean);
-    const hasPcGeneric = /\b(pc|computer|system|laptop|workstation|rig|machine|nodes?)\b/i.test(clean);
-    const hasBuild = /\b(build|compile|gradle|assemble)\b/i.test(clean);
-    const hasTest = /\b(test|typecheck|lint|verify)\b/i.test(clean);
-    const hasCode = /\b(code|generate code|refactor|script)\b/i.test(clean);
-    const hasRun = /\b(run|exec|execute|start task|boot|start service)\b/i.test(clean);
-    const hasStatus = /\b(status|check|health|ping|probe|info|state|diagnostic|how is)\b/i.test(clean);
-
-    // If query matches tri-node execution patterns:
-    // 1. Mentions PC-A or PC-B specifically
-    // 2. Mentions Ollama service
-    // 3. Asks for status/check of PC, computer, system, nodes (e.g. "status of PC", "check my pc", "system status")
-    // 4. Build, test, run, or code commands
-    const isRemoteIntent =
-      hasPcA ||
-      hasPcB ||
-      hasOllama ||
-      (hasStatus && (hasPcGeneric || clean.includes('pc') || clean.includes('system') || clean.includes('fabric'))) ||
-      ((hasBuild || hasTest || hasRun || hasCode) && (hasPcGeneric || hasPcB || hasPcA || hasTest || hasBuild || clean.includes('app') || clean.includes('mobile') || clean.includes('script')));
-
-    if (isRemoteIntent) {
-      let targetNode: NodeTarget = 'PC-B';
-      if (hasPcA || hasOllama || (clean.includes('gpu') && !hasPcB)) {
-        targetNode = 'PC-A';
-      } else {
-        targetNode = 'PC-B';
-      }
-
-      let action: ExecAction = 'STATUS';
-      let command: string | undefined;
-      let application: string | undefined;
-
-      if (hasOllama && (clean.includes('start') || clean.includes('boot') || clean.includes('run') || clean.includes('turn on') || clean.includes('serve'))) {
-        action = 'LAUNCH_APP';
-        application = 'ollama';
-      } else if (hasBuild) {
-        action = 'BUILD';
-        command = 'cd apps/mobile/android && .\\gradlew.bat --version';
-      } else if (hasTest) {
-        action = 'TEST';
-        command = 'pnpm --filter @aiva/mobile typecheck';
-      } else if (hasCode) {
-        action = 'CODE';
-      } else if (hasRun) {
-        action = 'EXEC';
-      } else if (hasStatus) {
-        action = 'STATUS';
-      }
-
-      return {
-        isRemoteExec: true,
-        targetNode,
-        action,
-        application,
-        command,
-        query: text.trim(),
-      };
-    }
-
-    return null;
+    const res = detectRemoteExecutionIntent(text);
+    return res.isRemoteExec ? res : null;
   }
 
   /**
