@@ -23,6 +23,7 @@ import {
   Platform,
   PermissionsAndroid,
   KeyboardAvoidingView,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -508,6 +509,33 @@ export default function MobileHomeScreen() {
 
     return () => unsub();
   }, [handleProcessVoiceCommand, clearTimers, scheduleDormancy]);
+
+  // Deep-link intent subscription (e.g. aiva://voice?command=create%20a%20new%20note%20in%20notes)
+  useEffect(() => {
+    const handleUrl = (event: { url: string }) => {
+      try {
+        const rawUrl = event.url;
+        console.log('[AIVA DeepLink] Received deep-link intent:', rawUrl);
+        const match = rawUrl.match(/[?&]command=([^&]+)/);
+        if (match && match[1]) {
+          const cmd = decodeURIComponent(match[1].replace(/\+/g, ' '));
+          console.log('[AIVA DeepLink] Executing voice command from intent payload:', cmd);
+          handleProcessVoiceCommand(cmd);
+        }
+      } catch (err) {
+        console.warn('[AIVA DeepLink] Intent parse error:', err);
+      }
+    };
+
+    const sub = Linking.addEventListener('url', handleUrl);
+    Linking.getInitialURL().then((url) => {
+      if (url) handleUrl({ url });
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, [handleProcessVoiceCommand]);
 
   // Wake-word service subscription
   useEffect(() => {
