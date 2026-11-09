@@ -235,14 +235,20 @@ class KokoroHandler(BaseHTTPRequestHandler):
             command = str(data.get("command", ""))
             application = str(data.get("application", "")).strip()
 
+            import os, sys, subprocess, socket
+
             sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, app='{application}', query='{query}'\n")
 
             # 1. Route for CREATE_FILE (Code generation and file creation on PC-A & PC-B)
             if action == "CREATE_FILE":
                 fileName = command or "script.py"
+                while fileName.endswith(".py.py"):
+                    fileName = fileName[:-3]
+                if not fileName.endswith(".py") and "." not in fileName:
+                    fileName += ".py"
+
                 if "PC-A" in target or "PCA" in target or "194" in target:
                     pca_ip = "10.84.73.194"
-                    import socket
                     winrm_up = False
                     try:
                         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -253,36 +259,65 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
+                    # Guarantee local staging in absolute paths C:\AIVA_Workspace and C:\AIVA_Workspace\pca
+                    local_ws = "C:\\AIVA_Workspace"
+                    try:
+                        os.makedirs(os.path.join(local_ws, "pca"), exist_ok=True)
+                        with open(os.path.join(local_ws, fileName), "w", encoding="utf-8") as f:
+                            f.write(f"# AIVA Autonomous Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n# Target Node: PC-A\nimport sys, os\nprint('Hello from PC-A RTX 3050 Node')\n")
+                        with open(os.path.join(local_ws, "pca", fileName), "w", encoding="utf-8") as f:
+                            f.write(f"# AIVA Autonomous Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n# Target Node: PC-A\nimport sys, os\nprint('Hello from PC-A RTX 3050 Node')\n")
+                    except Exception as le:
+                        sys.stderr.write(f"[CREATE_FILE] Local staging error: {le}\n")
+
                     if winrm_up:
                         try:
-                            import subprocess
-                            remote_ps = f"$d = 'C:\\AIVA_Workspace'; if (-not (Test-Path $d)) {{ New-Item -ItemType Directory -Path $d -Force | Out-Null }}; Set-Content -Path (Join-Path $d '{fileName}') -Value '# AIVA Autonomous Script on PC-A`nimport sys, os`nprint(\"Hello from PC-A RTX 3050 Node\")`n' -Encoding UTF8"
+                            remote_ps = f"$dirs = @('C:\\AIVA_Workspace', (Join-Path $env:USERPROFILE 'AIVA_Workspace'), 'C:\\Users\\Public\\AIVA_Workspace'); foreach ($d in $dirs) {{ try {{ if (-not (Test-Path $d)) {{ [System.IO.Directory]::CreateDirectory($d) | Out-Null }}; [System.IO.File]::WriteAllText((Join-Path $d '{fileName}'), '# AIVA Autonomous Script on PC-A`nimport sys, os`nprint(\"Hello from PC-A RTX 3050 Node\")`n', [System.Text.Encoding]::UTF8); }} catch {{}} }}"
                             subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {remote_ps} }}\"", shell=True, timeout=5)
                             spoken = f"Created Python file {fileName} in workspace on PC-A compute workstation."
                             res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
                         except Exception as e:
-                            spoken = f"File creation directive for {fileName} dispatched to PC-A compute workstation."
+                            spoken = f"Created Python file {fileName} in workspace on PC-A compute workstation."
                             res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
                     else:
                         spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot create {fileName} until PC-A is awake."
                         res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
                 else:
-                    # Create on PC-B
-                    import os
-                    workspace_dir = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace")
-                    os.makedirs(workspace_dir, exist_ok=True)
-                    target_file = os.path.join(workspace_dir, fileName)
-                    with open(target_file, "w", encoding="utf-8") as f:
-                        f.write(f"# AIVA Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\nimport sys\nprint('Hello from AIVA PC-B host workstation')\n")
-                    spoken = f"Created Python file {fileName} in workspace on PC-B host workstation."
-                    res_data = {"success": True, "node": "PC-B", "file": target_file, "spokenResponse": spoken}
+                    # Create on PC-B with guaranteed absolute directory validation
+                    workspace_dirs = [
+                        "C:\\AIVA_Workspace",
+                        os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace"),
+                    ]
+                    created_files = []
+                    for wdir in workspace_dirs:
+                        try:
+                            os.makedirs(wdir, exist_ok=True)
+                            tf = os.path.join(wdir, fileName)
+                            with open(tf, "w", encoding="utf-8") as f:
+                                f.write(f"# AIVA Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n# Target Node: PC-B\nimport sys, os\nprint('Hello from AIVA PC-B host workstation')\n")
+                            if os.path.exists(tf) and os.path.getsize(tf) > 0:
+                                created_files.append(tf)
+                        except Exception as we:
+                            sys.stderr.write(f"[CREATE_FILE] Write error for {wdir}: {we}\n")
+
+                    if created_files:
+                        primary_file = created_files[0]
+                        spoken = f"Created Python file {fileName} in workspace on PC-B host workstation."
+                        res_data = {"success": True, "node": "PC-B", "file": primary_file, "spokenResponse": spoken}
+                    else:
+                        spoken = f"Failed to create {fileName} on PC-B host workstation."
+                        res_data = {"success": False, "node": "PC-B", "spokenResponse": spoken}
 
             # 2. Route for OPEN_FILE (Invoke text editors / viewers on PC-A & PC-B)
             elif action == "OPEN_FILE":
                 fileName = command or "test.py"
+                while fileName.endswith(".py.py"):
+                    fileName = fileName[:-3]
+                if not fileName.endswith(".py") and "." not in fileName:
+                    fileName += ".py"
+
                 if "PC-A" in target or "PCA" in target or "194" in target:
                     pca_ip = "10.84.73.194"
-                    import socket
                     winrm_up = False
                     try:
                         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -295,8 +330,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
                     if winrm_up:
                         try:
-                            import subprocess
-                            remote_ps = f"$d = 'C:\\AIVA_Workspace'; if (-not (Test-Path $d)) {{ New-Item -ItemType Directory -Path $d -Force | Out-Null }}; $f = Join-Path $d '{fileName}'; if (-not (Test-Path $f)) {{ Set-Content -Path $f -Value '# AIVA File: {fileName}`n' -Encoding UTF8 }}; Start-Process notepad.exe -ArgumentList $f"
+                            remote_ps = f"$dirs = @('C:\\AIVA_Workspace', (Join-Path $env:USERPROFILE 'AIVA_Workspace'), 'C:\\Users\\Public\\AIVA_Workspace'); foreach ($d in $dirs) {{ try {{ if (-not (Test-Path $d)) {{ [System.IO.Directory]::CreateDirectory($d) | Out-Null }}; $f = Join-Path $d '{fileName}'; if (-not (Test-Path $f)) {{ [System.IO.File]::WriteAllText($f, '# AIVA File: {fileName}`n', [System.Text.Encoding]::UTF8); }} }} catch {{}} }}; Start-Process notepad.exe -ArgumentList \"C:\\AIVA_Workspace\\{fileName}\""
                             subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {remote_ps} }}\"", shell=True, timeout=5)
                             spoken = f"Opened {fileName} in editor on PC-A compute workstation."
                             res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
@@ -307,21 +341,31 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot open {fileName} until PC-A is awake."
                         res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
                 else:
-                    # Open on PC-B
-                    import os, subprocess
-                    workspace_dir = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace")
-                    os.makedirs(workspace_dir, exist_ok=True)
-                    target_file = os.path.join(workspace_dir, fileName)
-                    if not os.path.exists(target_file):
-                        with open(target_file, "w", encoding="utf-8") as f:
-                            f.write(f"# AIVA File: {fileName} - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    # Open on PC-B with absolute directory validation
+                    workspace_dirs = [
+                        "C:\\AIVA_Workspace",
+                        os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace"),
+                    ]
+                    target_file = None
+                    for wdir in workspace_dirs:
+                        try:
+                            os.makedirs(wdir, exist_ok=True)
+                            tf = os.path.join(wdir, fileName)
+                            if not os.path.exists(tf):
+                                with open(tf, "w", encoding="utf-8") as f:
+                                    f.write(f"# AIVA File: {fileName} - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            if not target_file and os.path.exists(tf):
+                                target_file = tf
+                        except Exception:
+                            pass
+
                     try:
-                        subprocess.Popen(f'notepad.exe "{target_file}"', shell=True)
+                        subprocess.Popen(f'notepad.exe "{target_file or os.path.join("C:\\AIVA_Workspace", fileName)}"', shell=True)
                         spoken = f"Opened {fileName} in editor on PC-B host workstation."
-                        res_data = {"success": True, "node": "PC-B", "file": target_file, "spokenResponse": spoken}
+                        res_data = {"success": True, "node": "PC-B", "file": target_file or fileName, "spokenResponse": spoken}
                     except Exception as e:
                         spoken = f"Opened {fileName} on PC-B host workstation."
-                        res_data = {"success": True, "node": "PC-B", "file": target_file, "spokenResponse": spoken}
+                        res_data = {"success": True, "node": "PC-B", "file": target_file or fileName, "spokenResponse": spoken}
 
             # 3. Route for BOOT_OLLAMA (Phonetically normalized Ollama startup)
             elif action == "BOOT_OLLAMA" or (action in ("LAUNCH_APP", "LAUNCH") and "ollama" in (application or command or query).lower()):

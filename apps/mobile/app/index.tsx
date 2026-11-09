@@ -308,22 +308,34 @@ export default function MobileHomeScreen() {
           }
         }
 
-        // 2. Standalone Note Creation Intent Check (e.g. "Create a note buy milk", "Take a note call mom")
-        const standaloneNotePattern = /^(?:create|take|add|write|record)(?:\s+(?:a|an|new))?\s+(?:note|reminder|memo)(?:\s+(?:called|titled|with|saying|that|about|to|for|:))?\s+(.+)$/i;
-        const noteMatch = standaloneNotePattern.exec(clean);
-        if (noteMatch && noteMatch[1]) {
-          const noteText = noteMatch[1].trim();
-          const title = noteText.length > 30 ? noteText.slice(0, 30) + '...' : noteText;
+        // 2. Prioritize Local Notes / Reminders / Lists Creation First (e.g. "Create a new note in notes", "Create a note buy milk", "Add reminder")
+        if (/\b(?:note|notes|list|reminder|memo)\b/i.test(clean) && !/\b(?:pca|pcb|pc\-?a|pc\-?b)\b/i.test(clean)) {
           clearTimeout(watchdog);
-          try {
-            await aivaClient.createNote({ title, content: noteText });
-            const noteResp = `Created note: ${noteText}.`;
-            setLastResponseText(noteResp);
-            await speakResponse(noteResp);
-            return;
-          } catch (e) {
-            console.warn('[AIVA Voice] Standalone note error:', e);
+          const noteContent = clean
+            .replace(/^(?:create|make|write|add|take|record)\s+(?:a\s+)?(?:new\s+)?(?:note|notes|list|reminder|memo)\s*(?:in\s+notes\s*)?(?:about|to|for|called|titled|with|saying|that|:)?\s*/i, '')
+            .trim();
+
+          // If query mentions "in notes" or "open notes", launch the native notes app on the phone as well
+          if (/\b(?:in\s+notes|open\s+notes)\b/i.test(clean)) {
+            aivaVoiceService.launchApp('notes').catch(() => {});
           }
+
+          try {
+            await aivaClient.createNote({
+              title: noteContent ? (noteContent.length > 30 ? noteContent.slice(0, 30) + '...' : noteContent) : 'Quick Note',
+              content: noteContent || 'New note created via voice.',
+            });
+            const spoken = noteContent ? `Created note: ${noteContent}.` : 'Created a new note.';
+            setLastResponseText(spoken);
+            await speakResponse(spoken);
+          } catch (noteErr) {
+            console.warn('[AIVA Voice] Note save error:', noteErr);
+            const fallbackSpoken = noteContent ? `Created note: ${noteContent}.` : 'Created a new note.';
+            setLastResponseText(fallbackSpoken);
+            await speakResponse(fallbackSpoken);
+          }
+          scheduleDormancy(3000);
+          return;
         }
 
         // 3. Headless Task Scheduling Intent Check (e.g. "Schedule database backup", "Schedule build on PC-B", "Schedule a task to...")

@@ -170,6 +170,16 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     else if (/\b(pc[\s\-]?b|pcb)\b/i.test(normalized)) targetNode = 'PC-B';
   }
 
+  // Local notes, reminders, memos, or lists without explicit remote node (PCA/PCB) are strictly local mobile intents
+  if (/\b(?:note|notes|list|reminder|memo)\b/i.test(normalized) && !/\b(?:pca|pcb|pc\-?a|pc\-?b)\b/i.test(normalized)) {
+    return {
+      isRemoteExec: false,
+      targetNode: 'MOBILE',
+      action: 'LAUNCH_APP',
+      query: clean,
+    };
+  }
+
   // 1. BOOT OLLAMA
   if (/\b(?:boot|start|turn\s*on|activate|run)\s+ollama\b/i.test(strippedQuery) || /\bboot\s+ollama\b/i.test(normalized)) {
     return {
@@ -197,19 +207,22 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
   }
 
   // 3. CREATE FILE (e.g. "create a Python file called test.py in PCA", "create test buy in PCA")
-  const fileCreateRegex = /(?:create|make|write|generate|touch)\s+(?:a\s+)?(?:python\s+file|script|file)?\s*(?:called|named)?\s*([a-z0-9_\-\.]+)?/i;
+  const fileCreateRegex = /(?:create|make|write|generate|touch)\s+(?:a\s+)?(?:python\s+file|script|file|code)?\s*(?:called|named)?\s*([a-z0-9_\-\.]+)?/i;
   const fileMatch = strippedQuery.match(fileCreateRegex);
-  if (fileMatch && (fileMatch[1] || strippedQuery.includes('file') || strippedQuery.includes('script'))) {
-    let rawFileName = fileMatch[1] || 'workspace_script.py';
-    rawFileName = rawFileName.replace(/\s+buy\b/gi, '').trim();
-    const fileName = rawFileName.endsWith('.py') || rawFileName.includes('.') ? rawFileName : `${rawFileName}.py`;
-    return {
-      isRemoteExec: true,
-      targetNode: targetNode === 'MOBILE' ? 'PC-A' : targetNode, // Default coding/scripts to PC-A
-      action: 'CREATE_FILE',
-      command: fileName,
-      query: clean,
-    };
+  if (fileMatch && (fileMatch[1] || strippedQuery.includes('file') || strippedQuery.includes('script') || strippedQuery.includes('python'))) {
+    const isExplicitCodeRequest = /\b(?:python|script|code|\.py|\.js|\.ts)\b/i.test(strippedQuery) || targetNode !== 'MOBILE';
+    if (isExplicitCodeRequest) {
+      let rawFileName = fileMatch[1] || 'workspace_script.py';
+      rawFileName = rawFileName.replace(/\s+buy\b/gi, '').trim();
+      const fileName = rawFileName.endsWith('.py') || rawFileName.includes('.') ? rawFileName : `${rawFileName}.py`;
+      return {
+        isRemoteExec: true,
+        targetNode: targetNode === 'MOBILE' ? 'PC-A' : targetNode, // Default coding/scripts to PC-A
+        action: 'CREATE_FILE',
+        command: fileName,
+        query: clean,
+      };
+    }
   }
 
   // 4. GENERAL SCRIPT / TERMINAL EXECUTION
