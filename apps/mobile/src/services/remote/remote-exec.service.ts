@@ -11,14 +11,15 @@ import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
 
 export type NodeTarget = 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA';
+export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT';
 
 export interface RemoteExecIntent {
   isRemoteExec: boolean;
   targetNode: 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE';
+  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE' | 'TYPE_TEXT';
   application?: string;
   command?: string;
+  text?: string;
   query: string;
 }
 
@@ -180,7 +181,21 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 1. BOOT OLLAMA
+  // 1. Voice Dictation Mode (e.g. "type print hello world", "dictate def foo():", "write line ...", "add line ...")
+  const typeMatch = clean.match(/^(?:type|dictate|insert|write\s+line|add\s+line)\s+(.+)$/i);
+  if (typeMatch && typeMatch[1]) {
+    const textToType = typeMatch[1].trim();
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'TYPE_TEXT',
+      command: textToType,
+      text: textToType,
+      query: clean,
+    };
+  }
+
+  // 2. BOOT OLLAMA
   if (/\b(?:boot|start|turn\s*on|activate|run)\s+ollama\b/i.test(strippedQuery) || /\bboot\s+ollama\b/i.test(normalized)) {
     return {
       isRemoteExec: true,
@@ -191,7 +206,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 2. OPEN FILE (e.g. "open test.py in PCA", "open test buy in PCA", "view script.py on PC-B")
+  // 3. OPEN FILE (e.g. "open test.py in PCA", "open test buy in PCA", "open test.py", "view script.py on PC-B")
   const openFileRegex = /\b(?:open|view|edit)\s+([a-z0-9_\-\.\s]+(?:\.py|\.js|\.ts|\.txt|\.ps1|\.json|\.md)?)\b/i;
   const openMatch = strippedQuery.match(openFileRegex);
   if (openMatch && (openMatch[1].includes('.') || openMatch[1].includes('test') || openMatch[1].includes('script') || openMatch[1].includes('file'))) {
@@ -199,14 +214,14 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     if (!fileName.includes('.')) fileName += '.py';
     return {
       isRemoteExec: true,
-      targetNode: targetNode === 'MOBILE' ? 'PC-A' : targetNode,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode, // Default opening file window to PC-B desktop screen
       action: 'OPEN_FILE',
       command: fileName,
       query: clean,
     };
   }
 
-  // 3. CREATE FILE (e.g. "create a Python file called test.py in PCA", "create test buy in PCA")
+  // 4. CREATE FILE (e.g. "create a Python file called test.py in PCA", "create test buy in PCA")
   const fileCreateRegex = /(?:create|make|write|generate|touch)\s+(?:a\s+)?(?:python\s+file|script|file|code)?\s*(?:called|named)?\s*([a-z0-9_\-\.]+)?/i;
   const fileMatch = strippedQuery.match(fileCreateRegex);
   if (fileMatch && (fileMatch[1] || strippedQuery.includes('file') || strippedQuery.includes('script') || strippedQuery.includes('python'))) {
@@ -291,6 +306,7 @@ export class RemoteExecService {
           application: intent.application || '',
           query: intent.query,
           command: intent.command || '',
+          text: intent.text || intent.command || '',
         },
         {
           headers: { 'Content-Type': 'application/json' },

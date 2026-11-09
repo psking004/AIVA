@@ -384,6 +384,12 @@ export default function MobileHomeScreen() {
           clearTimeout(watchdog);
           setLastResponseText(execResult.spokenResponse);
           await speakResponse(execResult.spokenResponse);
+          // If in dictation mode or just created a blank file, keep dictation window alive for follow-up dictation
+          if (remoteIntent.action === 'TYPE_TEXT') {
+            scheduleDormancy(10000);
+          } else if (remoteIntent.action === 'CREATE_FILE') {
+            scheduleDormancy(12000);
+          }
           return;
         }
 

@@ -37,6 +37,12 @@ VOICES_PATH = os.path.join(MODELS_DIR, "voices.bin")
 kokoro_engine = None
 aiva_voice_vector = None
 
+# Active open file tracking for voice dictation
+ACTIVE_SESSION = {
+    "node": "PC-B",
+    "active_file": "script.py"
+}
+
 def init_engine():
     global kokoro_engine, aiva_voice_vector
     if not os.path.exists(MODEL_PATH) or not os.path.exists(VOICES_PATH):
@@ -235,137 +241,187 @@ class KokoroHandler(BaseHTTPRequestHandler):
             command = str(data.get("command", ""))
             application = str(data.get("application", "")).strip()
 
+            global ACTIVE_SESSION
             import os, sys, subprocess, socket
 
             sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, app='{application}', query='{query}'\n")
 
-            # 1. Route for CREATE_FILE (Code generation and file creation on PC-A & PC-B)
+            # 1. Action: CREATE_FILE (Pure Blank File + Auto-Launch)
             if action == "CREATE_FILE":
-                fileName = command or "script.py"
-                while fileName.endswith(".py.py"):
-                    fileName = fileName[:-3]
-                if not fileName.endswith(".py") and "." not in fileName:
-                    fileName += ".py"
+                file_name = command if command else "script.py"
+                while file_name.endswith(".py.py"):
+                    file_name = file_name[:-3]
+                if not any(file_name.endswith(ext) for ext in ['.py', '.js', '.ts', '.txt', '.ps1', '.json', '.md']):
+                    file_name += ".py"
 
-                if "PC-A" in target or "PCA" in target or "194" in target:
-                    pca_ip = "10.84.73.194"
-                    winrm_up = False
-                    try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.settimeout(2.5)
-                        s.connect((pca_ip, 5985))
-                        s.close()
-                        winrm_up = True
-                    except Exception:
-                        pass
+                target_node = "PC-A" if ("PC-A" in target or "PCA" in target or "194" in target) else "PC-B"
+                ACTIVE_SESSION["node"] = target_node
+                ACTIVE_SESSION["active_file"] = file_name
 
-                    # Guarantee local staging in absolute paths C:\AIVA_Workspace and C:\AIVA_Workspace\pca
-                    local_ws = "C:\\AIVA_Workspace"
+                if target_node == "PC-A":
+                    workspace_dir = r"C:\AIVA_Workspace"
+                    remote_path = f"{workspace_dir}\\{file_name}"
+
+                    # Guarantee local staging of blank file on host
                     try:
-                        os.makedirs(os.path.join(local_ws, "pca"), exist_ok=True)
-                        with open(os.path.join(local_ws, fileName), "w", encoding="utf-8") as f:
-                            f.write(f"# AIVA Autonomous Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n# Target Node: PC-A\nimport sys, os\nprint('Hello from PC-A RTX 3050 Node')\n")
-                        with open(os.path.join(local_ws, "pca", fileName), "w", encoding="utf-8") as f:
-                            f.write(f"# AIVA Autonomous Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n# Target Node: PC-A\nimport sys, os\nprint('Hello from PC-A RTX 3050 Node')\n")
+                        os.makedirs(os.path.join(workspace_dir, "pca"), exist_ok=True)
+                        with open(os.path.join(workspace_dir, file_name), "w", encoding="utf-8") as f:
+                            f.write("")
+                        with open(os.path.join(workspace_dir, "pca", file_name), "w", encoding="utf-8") as f:
+                            f.write("")
                     except Exception as le:
                         sys.stderr.write(f"[CREATE_FILE] Local staging error: {le}\n")
 
-                    if winrm_up:
-                        try:
-                            remote_ps = f"$dirs = @('C:\\AIVA_Workspace', (Join-Path $env:USERPROFILE 'AIVA_Workspace'), 'C:\\Users\\Public\\AIVA_Workspace'); foreach ($d in $dirs) {{ try {{ if (-not (Test-Path $d)) {{ [System.IO.Directory]::CreateDirectory($d) | Out-Null }}; [System.IO.File]::WriteAllText((Join-Path $d '{fileName}'), '# AIVA Autonomous Script on PC-A`nimport sys, os`nprint(\"Hello from PC-A RTX 3050 Node\")`n', [System.Text.Encoding]::UTF8); }} catch {{}} }}"
-                            subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {remote_ps} }}\"", shell=True, timeout=5)
-                            spoken = f"Created Python file {fileName} in workspace on PC-A compute workstation."
-                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
-                        except Exception as e:
-                            spoken = f"Created Python file {fileName} in workspace on PC-A compute workstation."
-                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
-                    else:
-                        spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot create {fileName} until PC-A is awake."
-                        res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
-                else:
-                    # Create on PC-B with guaranteed absolute directory validation
-                    workspace_dirs = [
-                        "C:\\AIVA_Workspace",
-                        os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace"),
-                    ]
-                    created_files = []
-                    for wdir in workspace_dirs:
-                        try:
-                            os.makedirs(wdir, exist_ok=True)
-                            tf = os.path.join(wdir, fileName)
-                            with open(tf, "w", encoding="utf-8") as f:
-                                f.write(f"# AIVA Script - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n# Target Node: PC-B\nimport sys, os\nprint('Hello from AIVA PC-B host workstation')\n")
-                            if os.path.exists(tf) and os.path.getsize(tf) > 0:
-                                created_files.append(tf)
-                        except Exception as we:
-                            sys.stderr.write(f"[CREATE_FILE] Write error for {wdir}: {we}\n")
-
-                    if created_files:
-                        primary_file = created_files[0]
-                        spoken = f"Created Python file {fileName} in workspace on PC-B host workstation."
-                        res_data = {"success": True, "node": "PC-B", "file": primary_file, "spokenResponse": spoken}
-                    else:
-                        spoken = f"Failed to create {fileName} on PC-B host workstation."
-                        res_data = {"success": False, "node": "PC-B", "spokenResponse": spoken}
-
-            # 2. Route for OPEN_FILE (Invoke text editors / viewers on PC-A & PC-B)
-            elif action == "OPEN_FILE":
-                fileName = command or "test.py"
-                while fileName.endswith(".py.py"):
-                    fileName = fileName[:-3]
-                if not fileName.endswith(".py") and "." not in fileName:
-                    fileName += ".py"
-
-                if "PC-A" in target or "PCA" in target or "194" in target:
-                    pca_ip = "10.84.73.194"
-                    winrm_up = False
+                    ps_script = f"""
+                    $dir = '{workspace_dir}'
+                    if (-not (Test-Path $dir)) {{ [System.IO.Directory]::CreateDirectory($dir) | Out-Null }}
+                    $path = '{remote_path}'
+                    [System.IO.File]::WriteAllText($path, '')
+                    if (Test-Path $path) {{ Write-Output "SUCCESS" }} else {{ Write-Error "FAILED" }}
+                    """
+                    winrm_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {ps_script} }}\""
                     try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.settimeout(2.5)
-                        s.connect((pca_ip, 5985))
-                        s.close()
-                        winrm_up = True
-                    except Exception:
-                        pass
-
-                    if winrm_up:
-                        try:
-                            remote_ps = f"$dirs = @('C:\\AIVA_Workspace', (Join-Path $env:USERPROFILE 'AIVA_Workspace'), 'C:\\Users\\Public\\AIVA_Workspace'); foreach ($d in $dirs) {{ try {{ if (-not (Test-Path $d)) {{ [System.IO.Directory]::CreateDirectory($d) | Out-Null }}; $f = Join-Path $d '{fileName}'; if (-not (Test-Path $f)) {{ [System.IO.File]::WriteAllText($f, '# AIVA File: {fileName}`n', [System.Text.Encoding]::UTF8); }} }} catch {{}} }}; Start-Process notepad.exe -ArgumentList \"C:\\AIVA_Workspace\\{fileName}\""
-                            subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {remote_ps} }}\"", shell=True, timeout=5)
-                            spoken = f"Opened {fileName} in editor on PC-A compute workstation."
-                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
-                        except Exception as e:
-                            spoken = f"Dispatched open directive for {fileName} to PC-A compute workstation."
-                            res_data = {"success": True, "node": "PC-A", "file": fileName, "spokenResponse": spoken}
-                    else:
-                        spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot open {fileName} until PC-A is awake."
-                        res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
+                        proc = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=12)
+                        launch_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process notepad.exe '{remote_path}' }}\""
+                        subprocess.Popen(launch_cmd, shell=True)
+                        # Also open local editor mirror
+                        subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
+                        res_data = {
+                            "success": True,
+                            "node": "PC-A",
+                            "file": file_name,
+                            "spokenResponse": f"Created blank file {file_name} and opened it on PC-A. I'm listening, say 'type' followed by what you want to write."
+                        }
+                    except Exception as ex:
+                        # Fallback to local desktop opening
+                        subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
+                        res_data = {
+                            "success": True,
+                            "node": "PC-A",
+                            "file": file_name,
+                            "spokenResponse": f"Created blank file {file_name} and opened it in workspace. I'm listening, say 'type' followed by what you want to write."
+                        }
                 else:
-                    # Open on PC-B with absolute directory validation
-                    workspace_dirs = [
-                        "C:\\AIVA_Workspace",
-                        os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace"),
-                    ]
-                    target_file = None
-                    for wdir in workspace_dirs:
+                    # PC-B Local Execution (Pure Blank File + Auto-Launch)
+                    workspace_dir = r"C:\AIVA_Workspace"
+                    os.makedirs(workspace_dir, exist_ok=True)
+                    local_path = os.path.join(workspace_dir, file_name)
+                    try:
+                        with open(local_path, "w", encoding="utf-8") as f:
+                            f.write("")
+                        user_ws = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace")
                         try:
-                            os.makedirs(wdir, exist_ok=True)
-                            tf = os.path.join(wdir, fileName)
-                            if not os.path.exists(tf):
-                                with open(tf, "w", encoding="utf-8") as f:
-                                    f.write(f"# AIVA File: {fileName} - Created {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                            if not target_file and os.path.exists(tf):
-                                target_file = tf
+                            os.makedirs(user_ws, exist_ok=True)
+                            with open(os.path.join(user_ws, file_name), "w", encoding="utf-8") as f:
+                                f.write("")
                         except Exception:
                             pass
 
+                        # Auto-open the file in Notepad on PC-B desktop
+                        subprocess.Popen(f'notepad.exe "{local_path}"', shell=True)
+                        res_data = {
+                            "success": True,
+                            "node": "PC-B",
+                            "file": file_name,
+                            "spokenResponse": f"Created blank file {file_name} and opened it on PC-B. I'm listening, say 'type' followed by what you want to write."
+                        }
+                    except Exception as ex:
+                        res_data = {
+                            "success": False,
+                            "node": "PC-B",
+                            "spokenResponse": f"Failed to write file on PC-B: {str(ex)}"
+                        }
+
+            # 2. Action: TYPE_TEXT (Append text via Voice Dictation)
+            elif action == "TYPE_TEXT":
+                text_to_type = data.get("text", command)
+                raw_target = data.get("target", ACTIVE_SESSION.get("node", "PC-B")).upper()
+                target_node = "PC-A" if ("PC-A" in raw_target or "PCA" in raw_target) else "PC-B"
+                file_name = ACTIVE_SESSION.get("active_file", "script.py")
+
+                if target_node == "PC-A":
+                    remote_path = f"C:\\AIVA_Workspace\\{file_name}"
+                    safe_text = text_to_type.replace('"', '`"').replace("'", "''")
+                    ps_script = f"""
+                    $path = '{remote_path}'
+                    Add-Content -Path $path -Value '{safe_text}'
+                    """
+                    winrm_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {ps_script} }}\""
                     try:
-                        subprocess.Popen(f'notepad.exe "{target_file or os.path.join("C:\\AIVA_Workspace", fileName)}"', shell=True)
-                        spoken = f"Opened {fileName} in editor on PC-B host workstation."
-                        res_data = {"success": True, "node": "PC-B", "file": target_file or fileName, "spokenResponse": spoken}
-                    except Exception as e:
-                        spoken = f"Opened {fileName} on PC-B host workstation."
-                        res_data = {"success": True, "node": "PC-B", "file": target_file or fileName, "spokenResponse": spoken}
+                        subprocess.run(winrm_cmd, shell=True, timeout=8)
+                        try:
+                            with open(f"C:\\AIVA_Workspace\\{file_name}", "a", encoding="utf-8") as f:
+                                f.write(text_to_type + "\n")
+                        except Exception:
+                            pass
+                        res_data = {
+                            "success": True,
+                            "node": "PC-A",
+                            "file": file_name,
+                            "spokenResponse": "Typed."
+                        }
+                    except Exception as ex:
+                        res_data = {"success": False, "node": "PC-A", "spokenResponse": f"Error typing to PC-A: {str(ex)}"}
+                else:
+                    local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
+                    try:
+                        with open(local_path, "a", encoding="utf-8") as f:
+                            f.write(text_to_type + "\n")
+                        user_path = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace", file_name)
+                        try:
+                            with open(user_path, "a", encoding="utf-8") as f:
+                                f.write(text_to_type + "\n")
+                        except Exception:
+                            pass
+                        res_data = {
+                            "success": True,
+                            "node": "PC-B",
+                            "file": file_name,
+                            "spokenResponse": "Typed."
+                        }
+                    except Exception as ex:
+                        res_data = {"success": False, "node": "PC-B", "spokenResponse": f"Error typing locally: {str(ex)}"}
+
+            # 3. Action: OPEN_FILE (Explicit GUI window open)
+            elif action == "OPEN_FILE":
+                file_name = command if command else ACTIVE_SESSION.get("active_file", "script.py")
+                while file_name.endswith(".py.py"):
+                    file_name = file_name[:-3]
+                if not any(file_name.endswith(ext) for ext in ['.py', '.js', '.ts', '.txt', '.ps1', '.json', '.md']):
+                    file_name += ".py"
+
+                target_node = "PC-A" if ("PC-A" in target or "PCA" in target or "194" in target) else "PC-B"
+                ACTIVE_SESSION["node"] = target_node
+                ACTIVE_SESSION["active_file"] = file_name
+
+                if target_node == "PC-A":
+                    remote_path = f"C:\\AIVA_Workspace\\{file_name}"
+                    cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process notepad.exe '{remote_path}' }}\""
+                    try:
+                        subprocess.Popen(cmd, shell=True)
+                    except Exception:
+                        pass
+                    local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
+                    if os.path.exists(local_path):
+                        subprocess.Popen(f'notepad.exe "{local_path}"', shell=True)
+                    res_data = {
+                        "success": True,
+                        "node": "PC-A",
+                        "file": file_name,
+                        "spokenResponse": f"Opened {file_name} on PC-A."
+                    }
+                else:
+                    local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
+                    if not os.path.exists(local_path):
+                        with open(local_path, "w", encoding="utf-8") as f:
+                            f.write("")
+                    subprocess.Popen(f'notepad.exe "{local_path}"', shell=True)
+                    res_data = {
+                        "success": True,
+                        "node": "PC-B",
+                        "file": file_name,
+                        "spokenResponse": f"Opened {file_name} on PC-B."
+                    }
 
             # 3. Route for BOOT_OLLAMA (Phonetically normalized Ollama startup)
             elif action == "BOOT_OLLAMA" or (action in ("LAUNCH_APP", "LAUNCH") and "ollama" in (application or command or query).lower()):
