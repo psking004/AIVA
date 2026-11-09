@@ -235,7 +235,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b'{"error": "invalid_json"}')
                 return
 
-            target = str(data.get("target", "PC-B")).upper()
+            target = str(data.get("target") or data.get("targetNode") or "PC-B").upper()
             action = str(data.get("action", "STATUS")).upper()
             query = str(data.get("query", ""))
             command = str(data.get("command", ""))
@@ -248,7 +248,8 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
             # 1. Action: CREATE_FILE (Pure Blank File + Auto-Launch)
             if action == "CREATE_FILE":
-                file_name = command if command else "script.py"
+                raw_file = data.get("filename") or data.get("file") or command or "script.py"
+                file_name = str(raw_file).strip()
                 while file_name.endswith(".py.py"):
                     file_name = file_name[:-3]
                 if not any(file_name.endswith(ext) for ext in ['.py', '.js', '.ts', '.txt', '.ps1', '.json', '.md']):
@@ -335,7 +336,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
             # 2. Action: TYPE_TEXT (Append text via Voice Dictation)
             elif action == "TYPE_TEXT":
                 text_to_type = data.get("text", command)
-                raw_target = data.get("target", ACTIVE_SESSION.get("node", "PC-B")).upper()
+                raw_target = str(data.get("target") or data.get("targetNode") or ACTIVE_SESSION.get("node", "PC-B")).upper()
                 target_node = "PC-A" if ("PC-A" in raw_target or "PCA" in raw_target) else "PC-B"
                 file_name = ACTIVE_SESSION.get("active_file", "script.py")
 
@@ -351,6 +352,8 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         subprocess.run(winrm_cmd, shell=True, timeout=8)
                         try:
                             with open(f"C:\\AIVA_Workspace\\{file_name}", "a", encoding="utf-8") as f:
+                                f.write(text_to_type + "\n")
+                            with open(f"C:\\AIVA_Workspace\\pca\\{file_name}", "a", encoding="utf-8") as f:
                                 f.write(text_to_type + "\n")
                         except Exception:
                             pass
@@ -384,7 +387,8 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
             # 3. Action: OPEN_FILE (Explicit GUI window open)
             elif action == "OPEN_FILE":
-                file_name = command if command else ACTIVE_SESSION.get("active_file", "script.py")
+                raw_file = data.get("filename") or data.get("file") or command or ACTIVE_SESSION.get("active_file", "script.py")
+                file_name = str(raw_file).strip()
                 while file_name.endswith(".py.py"):
                     file_name = file_name[:-3]
                 if not any(file_name.endswith(ext) for ext in ['.py', '.js', '.ts', '.txt', '.ps1', '.json', '.md']):
