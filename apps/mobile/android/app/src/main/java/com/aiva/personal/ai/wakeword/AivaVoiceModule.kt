@@ -514,12 +514,36 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                     "gmail" to "com.google.android.gm",
                     "photos" to "com.google.android.apps.photos",
                     "play store" to "com.android.vending",
-                    "music" to "com.spotify.music"
+                    "music" to "com.spotify.music",
+                    "notes" to "com.vivo.notes",
+                    "note" to "com.vivo.notes",
+                    "memo" to "com.vivo.notes",
+                    "keep" to "com.google.android.keep"
                 )
                 val mapped = commonMap[targetPackage.lowercase()]
                 if (mapped != null) {
                     targetPackage = mapped
                     intent = pm.getLaunchIntentForPackage(targetPackage)
+                }
+
+                // If notes app mapping didn't find com.vivo.notes, check other OEM note packages
+                if (intent == null && targetPackage.lowercase() in listOf("notes", "note", "memo", "keep")) {
+                    val noteCandidates = listOf(
+                        "com.vivo.notes",
+                        "com.google.android.keep",
+                        "com.samsung.android.app.notes",
+                        "com.miui.notes",
+                        "com.oneplus.note",
+                        "com.coloros.note"
+                    )
+                    for (candidate in noteCandidates) {
+                        val candIntent = pm.getLaunchIntentForPackage(candidate)
+                        if (candIntent != null) {
+                            targetPackage = candidate
+                            intent = candIntent
+                            break
+                        }
+                    }
                 }
             }
 

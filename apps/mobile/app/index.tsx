@@ -36,7 +36,11 @@ import { ContextualSheet } from '../src/components/contextual-sheet';
 import { wakeWordService } from '../src/services/wakeword/wake-word.service';
 import { aivaClient } from '../src/services/api/aiva-client';
 import { aivaVoiceService, VoiceState } from '../src/services/voice/voice.service';
-import { remoteExecService } from '../src/services/remote/remote-exec.service';
+import {
+  remoteExecService,
+  parseLaunchIntent,
+  parseNoteFollowUp,
+} from '../src/services/remote/remote-exec.service';
 
 export default function MobileHomeScreen() {
   // Presence lifecycle: DORMANT by default (face hidden, minimal clock)
@@ -237,29 +241,88 @@ export default function MobileHomeScreen() {
           return;
         }
 
-        // 1. Check if command targets desktop workstation (e.g. "Open VS Code on PC-B", "Launch Chrome on PC-A")
-        const isDesktopTarget =
-          /\b(on|in|at)\s+(pc-?a|pc-?b|desktop|workstation|computer)\b/i.test(clean) ||
-          /\b(pc-?a|pc-?b)\b/i.test(clean);
+        // 1. App Launch Intent Check (Non-greedy app name & compound intent support)
+        const launchCmd = parseLaunchIntent(clean);
+        if (launchCmd.isAppLaunch) {
+          if (launchCmd.targetNode === 'PC-A' || launchCmd.targetNode === 'PC-B') {
+            console.log(`[AIVA Voice] Remote workstation app launch recognized for ${launchCmd.targetNode}: "${launchCmd.appName}"`);
+            clearTimeout(watchdog);
+            const execResult = await remoteExecService.executeIntent({
+              isRemoteExec: true,
+              targetNode: launchCmd.targetNode,
+              action: 'LAUNCH_APP',
+              application: launchCmd.appName,
+              command: launchCmd.followUpAction,
+              query: clean,
+            });
+            setLastResponseText(execResult.spokenResponse);
+            await speakResponse(execResult.spokenResponse);
+            return;
+          }
 
-        // 2. Local Android App Launch Intent Check (only for local mobile actions, e.g. "Open Instagram", "Open YouTube")
-        if (!isDesktopTarget) {
-          const appLaunchPattern = /^(?:open|launch|start)\s+(?:the\s+)?([a-zA-Z0-9_\s]+)$/i;
-          const appMatch = appLaunchPattern.exec(clean);
-          if (appMatch && appMatch[1]) {
-            const targetAppName = appMatch[1].trim();
-            const internalHorizons = ['tasks', 'projects', 'memory', 'system', 'coding'];
-            if (!internalHorizons.includes(targetAppName.toLowerCase())) {
-              console.log(`[AIVA Voice] Local Android app launch recognized: "${targetAppName}"`);
-              clearTimeout(watchdog);
+          // Local Android App Launch (MOBILE)
+          const targetAppName = launchCmd.appName;
+          const internalHorizons = ['tasks', 'projects', 'memory', 'system', 'coding'];
+          if (!internalHorizons.includes(targetAppName.toLowerCase())) {
+            console.log(`[AIVA Voice] Local Android app launch recognized: "${targetAppName}", followUp: "${launchCmd.followUpAction || ''}"`);
+            clearTimeout(watchdog);
+
+            const isNotesApp = /^(?:notes?|memo|keep)$/i.test(targetAppName);
+            const noteAction = parseNoteFollowUp(launchCmd.followUpAction);
+
+            if (isNotesApp || noteAction.isNoteAction) {
               const launched = await aivaVoiceService.launchApp(targetAppName);
-              const appResponse = launched
+              let appResponse = launched
                 ? `Opening ${targetAppName}.`
                 : `I couldn't find ${targetAppName} installed on this device.`;
+
+              if (noteAction.content) {
+                try {
+                  await aivaClient.createNote({
+                    title: noteAction.title,
+                    content: noteAction.content,
+                  });
+                  appResponse = `Opening ${targetAppName} and created note: ${noteAction.content}.`;
+                } catch (noteErr) {
+                  console.warn('[AIVA Voice] Note save error:', noteErr);
+                  appResponse = `Opening ${targetAppName} to write ${noteAction.content}.`;
+                }
+              } else if (launchCmd.followUpAction) {
+                appResponse = `Opening ${targetAppName} to ${launchCmd.followUpAction}.`;
+              }
+
               setLastResponseText(appResponse);
               await speakResponse(appResponse);
               return;
             }
+
+            const launched = await aivaVoiceService.launchApp(targetAppName);
+            const appResponse = launched
+              ? (launchCmd.followUpAction
+                  ? `Opening ${targetAppName} to ${launchCmd.followUpAction}.`
+                  : `Opening ${targetAppName}.`)
+              : `I couldn't find ${targetAppName} installed on this device.`;
+            setLastResponseText(appResponse);
+            await speakResponse(appResponse);
+            return;
+          }
+        }
+
+        // 2. Standalone Note Creation Intent Check (e.g. "Create a note buy milk", "Take a note call mom")
+        const standaloneNotePattern = /^(?:create|take|add|write|record)(?:\s+(?:a|an|new))?\s+(?:note|reminder|memo)(?:\s+(?:called|titled|with|saying|that|about|to|for|:))?\s+(.+)$/i;
+        const noteMatch = standaloneNotePattern.exec(clean);
+        if (noteMatch && noteMatch[1]) {
+          const noteText = noteMatch[1].trim();
+          const title = noteText.length > 30 ? noteText.slice(0, 30) + '...' : noteText;
+          clearTimeout(watchdog);
+          try {
+            await aivaClient.createNote({ title, content: noteText });
+            const noteResp = `Created note: ${noteText}.`;
+            setLastResponseText(noteResp);
+            await speakResponse(noteResp);
+            return;
+          } catch (e) {
+            console.warn('[AIVA Voice] Standalone note error:', e);
           }
         }
 

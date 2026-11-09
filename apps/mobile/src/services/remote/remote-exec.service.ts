@@ -22,6 +22,101 @@ export interface RemoteExecIntent {
   query: string;
 }
 
+export interface ParsedLaunchCommand {
+  isAppLaunch: boolean;
+  appName: string;
+  followUpAction?: string; // e.g. "create a new note", "write buy milk"
+  targetNode: 'MOBILE' | 'PC-A' | 'PC-B';
+}
+
+/**
+ * Non-greedy app name and conjunction splitter for voice directives
+ */
+export function parseLaunchIntent(query: string): ParsedLaunchCommand {
+  const clean = query.trim().replace(/[.,!?;:]+$/, '');
+
+  // Pattern: Matches "open/launch/start/switch to <app> [and/then/to/with/write/create <action>] [on <pc-a/pc-b>]"
+  const regex = /^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+?)(?:\s+(?:and|then|to|with)\s+|\s*,\s*|\s+(?:write|create|take|note down)\s+)(.+)$/i;
+  const simpleRegex = /^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+)$/i;
+
+  let appRaw = '';
+  let actionRaw = '';
+
+  const compoundMatch = clean.match(regex);
+  if (compoundMatch) {
+    appRaw = compoundMatch[1].trim();
+    actionRaw = compoundMatch[2].trim();
+  } else {
+    const simpleMatch = clean.match(simpleRegex);
+    if (simpleMatch) {
+      appRaw = simpleMatch[1].trim();
+    } else {
+      return { isAppLaunch: false, appName: '', targetNode: 'MOBILE' };
+    }
+  }
+
+  // Detect if targeted to workstation
+  let targetNode: 'MOBILE' | 'PC-A' | 'PC-B' = 'MOBILE';
+  if (/\bon\s+(?:pc-?a|compute)\b/i.test(clean)) {
+    targetNode = 'PC-A';
+    appRaw = appRaw.replace(/\s+on\s+(?:pc-?a|compute)/i, '').trim();
+  } else if (/\bon\s+(?:pc-?b|pc|workstation|desktop)\b/i.test(clean)) {
+    targetNode = 'PC-B';
+    appRaw = appRaw.replace(/\s+on\s+(?:pc-?b|pc|workstation|desktop)/i, '').trim();
+  }
+
+  // Strip leading 'the ' if present (e.g. "the notes" -> "notes", "the camera" -> "camera")
+  appRaw = appRaw.replace(/^the\s+/i, '').trim();
+
+  return {
+    isAppLaunch: true,
+    appName: appRaw,
+    followUpAction: actionRaw || undefined,
+    targetNode,
+  };
+}
+
+export interface ParsedNoteAction {
+  isNoteAction: boolean;
+  content: string;
+  title: string;
+}
+
+/**
+ * Extract note title and content from compound follow-up voice directives
+ */
+export function parseNoteFollowUp(actionStr?: string): ParsedNoteAction {
+  if (!actionStr) {
+    return { isNoteAction: false, content: '', title: '' };
+  }
+  const cleanAction = actionStr.trim().replace(/[.,!?;:]+$/, '');
+
+  // Detect note creation intent in follow-up
+  const isNote =
+    /\b(note|reminder|memo|grocery|groceries|list|write|create|take|record)\b/i.test(cleanAction);
+
+  if (!isNote) {
+    return { isNoteAction: false, content: cleanAction, title: cleanAction };
+  }
+
+  let extracted = cleanAction
+    .replace(/^(?:write|create|take down|take|note down|add|make|record)\s+/i, '')
+    .replace(/^(?:a|an)\s+(?:new\s+)?(?:note|reminder|memo|quick reminder)\s*(?:called|titled|with|saying|that|about|to|for|:)?\s*/i, '')
+    .trim();
+
+  if (/^(?:a\s+)?(?:new\s+)?(?:note|reminder|memo)?$/i.test(extracted)) {
+    extracted = '';
+  }
+
+  const title = extracted ? (extracted.length > 30 ? extracted.slice(0, 30) + '...' : extracted) : 'Quick Note';
+
+  return {
+    isNoteAction: true,
+    content: extracted,
+    title,
+  };
+}
+
 export interface RemoteExecResult {
   success: boolean;
   node: string;
@@ -41,18 +136,15 @@ export class RemoteExecService {
     const clean = text.trim().toLowerCase();
     if (!clean) return null;
 
-    // 1. Workstation desktop app launch (e.g. "Open VS Code on PC-B", "Launch Chrome on PC-A", "Open Blender on PC-B")
-    const desktopAppPattern = /^(?:open|launch|start)\s+([a-zA-Z0-9_\s]+?)\s+(?:on|in|at)\s+(pc-?a|pc-?b|desktop|workstation|computer)$/i;
-    const desktopMatch = desktopAppPattern.exec(clean);
-    if (desktopMatch) {
-      const appName = desktopMatch[1].trim();
-      const targetStr = desktopMatch[2].toLowerCase();
-      const targetNode: NodeTarget = /pc-?a|pca/i.test(targetStr) ? 'PC-A' : 'PC-B';
+    // 1. Workstation desktop app launch (e.g. "Open VS Code on PC-B", "Launch Chrome on PC-A", "Open Blender on PC-B", "Open notes on PC-B and write buy groceries")
+    const launchCmd = parseLaunchIntent(text);
+    if (launchCmd.isAppLaunch && (launchCmd.targetNode === 'PC-A' || launchCmd.targetNode === 'PC-B')) {
       return {
         isRemoteExec: true,
-        targetNode,
+        targetNode: launchCmd.targetNode,
         action: 'LAUNCH_APP',
-        application: appName,
+        application: launchCmd.appName,
+        command: launchCmd.followUpAction,
         query: text.trim(),
       };
     }

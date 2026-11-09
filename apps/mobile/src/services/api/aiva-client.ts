@@ -338,6 +338,24 @@ class AivaApiClient {
   }
 
   /**
+   * Create a personal note in the user's AIVA cloud database
+   * Route: POST /notes
+   */
+  async createNote(note: { title: string; content?: string; tags?: string[] }): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+      const response = await this.client.post('/notes', {
+        title: note.title,
+        content: note.content || '',
+        tags: note.tags || ['voice-note'],
+      });
+      return { success: true, data: response.data };
+    } catch (error: any) {
+      console.warn('[AIVA Client] createNote failed:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Check cloud backend health
    */
   async checkBackendHealth(): Promise<{ isOnline: boolean; latencyMs?: number }> {
