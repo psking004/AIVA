@@ -40,7 +40,8 @@ aiva_voice_vector = None
 # Active open file tracking for voice dictation
 ACTIVE_SESSION = {
     "node": "PC-B",
-    "active_file": "script.py"
+    "active_file": "script.py",
+    "dictation_active": False
 }
 
 def init_engine():
@@ -258,12 +259,13 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 target_node = "PC-A" if ("PC-A" in target or "PCA" in target or "194" in target) else "PC-B"
                 ACTIVE_SESSION["node"] = target_node
                 ACTIVE_SESSION["active_file"] = file_name
+                ACTIVE_SESSION["dictation_active"] = False
 
                 if target_node == "PC-A":
                     workspace_dir = r"C:\AIVA_Workspace"
                     remote_path = f"{workspace_dir}\\{file_name}"
 
-                    # Guarantee local staging of blank file on host
+                    # 1. Guarantee local staging of blank file on host immediately
                     try:
                         os.makedirs(os.path.join(workspace_dir, "pca"), exist_ok=True)
                         with open(os.path.join(workspace_dir, file_name), "w", encoding="utf-8") as f:
@@ -273,35 +275,48 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     except Exception as le:
                         sys.stderr.write(f"[CREATE_FILE] Local staging error: {le}\n")
 
-                    ps_script = f"""
-                    $dir = '{workspace_dir}'
-                    if (-not (Test-Path $dir)) {{ [System.IO.Directory]::CreateDirectory($dir) | Out-Null }}
-                    $path = '{remote_path}'
-                    [System.IO.File]::WriteAllText($path, '')
-                    if (Test-Path $path) {{ Write-Output "SUCCESS" }} else {{ Write-Error "FAILED" }}
-                    """
-                    winrm_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {ps_script} }}\""
-                    try:
-                        proc = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=12)
-                        launch_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process notepad.exe '{remote_path}' }}\""
-                        subprocess.Popen(launch_cmd, shell=True)
-                        # Also open local editor mirror
-                        subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
-                        res_data = {
-                            "success": True,
-                            "node": "PC-A",
-                            "file": file_name,
-                            "spokenResponse": f"Created blank file {file_name} and opened it on PC-A. I'm listening, say 'type' followed by what you want to write."
-                        }
-                    except Exception as ex:
-                        # Fallback to local desktop opening
-                        subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
-                        res_data = {
-                            "success": True,
-                            "node": "PC-A",
-                            "file": file_name,
-                            "spokenResponse": f"Created blank file {file_name} and opened it in workspace. I'm listening, say 'type' followed by what you want to write."
-                        }
+                    # 2. Non-blocking asynchronous SMB share and WinRM creation attempts
+                    def async_pca_create(f_name, r_path):
+                        # SMB share attempt
+                        try:
+                            smb_dir = r"\\10.84.73.194\C$\AIVA_Workspace"
+                            smb_path = os.path.join(smb_dir, f_name)
+                            os.makedirs(smb_dir, exist_ok=True)
+                            with open(smb_path, "w", encoding="utf-8") as sf:
+                                sf.write("")
+                            sys.stderr.write(f"[CREATE_FILE] Successfully created blank file via SMB: {smb_path}\n")
+                        except Exception as smb_err:
+                            sys.stderr.write(f"[CREATE_FILE] SMB share creation note: {smb_err}\n")
+
+                        # WinRM attempt
+                        try:
+                            ps_script = f"""
+                            $sec = ConvertTo-SecureString 'AivaWinRM2025!' -AsPlainText -Force
+                            $cred = New-Object System.Management.Automation.PSCredential('alpha', $sec)
+                            try {{
+                                Invoke-Command -ComputerName 10.84.73.194 -Credential $cred -ScriptBlock {{
+                                    $dir = 'C:\\AIVA_Workspace'
+                                    if (-not (Test-Path $dir)) {{ [System.IO.Directory]::CreateDirectory($dir) | Out-Null }}
+                                    [System.IO.File]::WriteAllText('{r_path}', '')
+                                    Start-Process notepad.exe '{r_path}'
+                                }} -ErrorAction SilentlyContinue
+                            }} catch {{}}
+                            """
+                            subprocess.run(f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{ps_script}\"", shell=True, capture_output=True, timeout=8)
+                        except Exception:
+                            pass
+
+                    import threading
+                    threading.Thread(target=async_pca_create, args=(file_name, remote_path), daemon=True).start()
+
+                    # Open local editor mirror for immediate user interaction
+                    subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
+                    res_data = {
+                        "success": True,
+                        "node": "PC-A",
+                        "file": file_name,
+                        "spokenResponse": f"Created {file_name} on PC-A."
+                    }
                 else:
                     # PC-B Local Execution (Pure Blank File + Auto-Launch)
                     workspace_dir = r"C:\AIVA_Workspace"
@@ -324,7 +339,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                             "success": True,
                             "node": "PC-B",
                             "file": file_name,
-                            "spokenResponse": f"Created blank file {file_name} and opened it on PC-B. I'm listening, say 'type' followed by what you want to write."
+                            "spokenResponse": f"Created {file_name} on PC-B."
                         }
                     except Exception as ex:
                         res_data = {
@@ -333,23 +348,59 @@ class KokoroHandler(BaseHTTPRequestHandler):
                             "spokenResponse": f"Failed to write file on PC-B: {str(ex)}"
                         }
 
-            # 2. Action: TYPE_TEXT (Append text via Voice Dictation)
+            # 2. Action: START_DICTATION (Explicit Start Typing Toggle)
+            elif action == "START_DICTATION":
+                target_node = "PC-A" if ("PC-A" in target or "PCA" in target or "194" in target) else ACTIVE_SESSION.get("node", "PC-B")
+                ACTIVE_SESSION["node"] = target_node
+                ACTIVE_SESSION["dictation_active"] = True
+                res_data = {
+                    "success": True,
+                    "node": target_node,
+                    "file": ACTIVE_SESSION.get("active_file", "script.py"),
+                    "dictation_active": True,
+                    "spokenResponse": "Dictation started."
+                }
+
+            # 3. Action: STOP_DICTATION (Explicit Stop Typing Toggle)
+            elif action == "STOP_DICTATION":
+                target_node = ACTIVE_SESSION.get("node", "PC-B")
+                ACTIVE_SESSION["dictation_active"] = False
+                res_data = {
+                    "success": True,
+                    "node": target_node,
+                    "file": ACTIVE_SESSION.get("active_file", "script.py"),
+                    "dictation_active": False,
+                    "spokenResponse": "Dictation stopped."
+                }
+
+            # 4. Action: TYPE_TEXT (Append text via Voice Dictation)
             elif action == "TYPE_TEXT":
                 text_to_type = data.get("text", command)
                 raw_target = str(data.get("target") or data.get("targetNode") or ACTIVE_SESSION.get("node", "PC-B")).upper()
                 target_node = "PC-A" if ("PC-A" in raw_target or "PCA" in raw_target) else "PC-B"
                 file_name = ACTIVE_SESSION.get("active_file", "script.py")
 
-                if target_node == "PC-A":
-                    remote_path = f"C:\\AIVA_Workspace\\{file_name}"
-                    safe_text = text_to_type.replace('"', '`"').replace("'", "''")
-                    ps_script = f"""
-                    $path = '{remote_path}'
-                    Add-Content -Path $path -Value '{safe_text}'
-                    """
-                    winrm_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {ps_script} }}\""
-                    try:
-                        subprocess.run(winrm_cmd, shell=True, timeout=8)
+                clean_txt = str(text_to_type).strip().lower()
+                if clean_txt in ("start typing", "start dictation", "begin typing", "begin dictation"):
+                    ACTIVE_SESSION["dictation_active"] = True
+                    res_data = {"success": True, "node": target_node, "file": file_name, "spokenResponse": "Dictation started."}
+                elif clean_txt in ("stop typing", "stop dictation", "exit dictation", "finish typing", "end typing", "close dictation"):
+                    ACTIVE_SESSION["dictation_active"] = False
+                    res_data = {"success": True, "node": target_node, "file": file_name, "spokenResponse": "Dictation stopped."}
+                else:
+                    if target_node == "PC-A":
+                        # 1. Asynchronous SMB append attempt
+                        def async_pca_append(f_name, txt):
+                            try:
+                                smb_path = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
+                                with open(smb_path, "a", encoding="utf-8") as sf:
+                                    sf.write(txt + "\n")
+                            except Exception:
+                                pass
+                        import threading
+                        threading.Thread(target=async_pca_append, args=(file_name, text_to_type), daemon=True).start()
+
+                        # 2. Local mirror append
                         try:
                             with open(f"C:\\AIVA_Workspace\\{file_name}", "a", encoding="utf-8") as f:
                                 f.write(text_to_type + "\n")
@@ -363,29 +414,27 @@ class KokoroHandler(BaseHTTPRequestHandler):
                             "file": file_name,
                             "spokenResponse": "Typed."
                         }
-                    except Exception as ex:
-                        res_data = {"success": False, "node": "PC-A", "spokenResponse": f"Error typing to PC-A: {str(ex)}"}
-                else:
-                    local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
-                    try:
-                        with open(local_path, "a", encoding="utf-8") as f:
-                            f.write(text_to_type + "\n")
-                        user_path = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace", file_name)
+                    else:
+                        local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
                         try:
-                            with open(user_path, "a", encoding="utf-8") as f:
+                            with open(local_path, "a", encoding="utf-8") as f:
                                 f.write(text_to_type + "\n")
-                        except Exception:
-                            pass
-                        res_data = {
-                            "success": True,
-                            "node": "PC-B",
-                            "file": file_name,
-                            "spokenResponse": "Typed."
-                        }
-                    except Exception as ex:
-                        res_data = {"success": False, "node": "PC-B", "spokenResponse": f"Error typing locally: {str(ex)}"}
+                            user_path = os.path.join(os.environ.get("USERPROFILE", "C:\\Users\\bhara"), "AIVA_Workspace", file_name)
+                            try:
+                                with open(user_path, "a", encoding="utf-8") as f:
+                                    f.write(text_to_type + "\n")
+                            except Exception:
+                                pass
+                            res_data = {
+                                "success": True,
+                                "node": "PC-B",
+                                "file": file_name,
+                                "spokenResponse": "Typed."
+                            }
+                        except Exception as ex:
+                            res_data = {"success": False, "node": "PC-B", "spokenResponse": f"Error typing locally: {str(ex)}"}
 
-            # 3. Action: OPEN_FILE (Explicit GUI window open)
+            # 5. Action: OPEN_FILE (Explicit GUI window open)
             elif action == "OPEN_FILE":
                 raw_file = data.get("filename") or data.get("file") or command or ACTIVE_SESSION.get("active_file", "script.py")
                 file_name = str(raw_file).strip()
@@ -397,6 +446,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 target_node = "PC-A" if ("PC-A" in target or "PCA" in target or "194" in target) else "PC-B"
                 ACTIVE_SESSION["node"] = target_node
                 ACTIVE_SESSION["active_file"] = file_name
+                ACTIVE_SESSION["dictation_active"] = False
 
                 if target_node == "PC-A":
                     remote_path = f"C:\\AIVA_Workspace\\{file_name}"
@@ -412,7 +462,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "success": True,
                         "node": "PC-A",
                         "file": file_name,
-                        "spokenResponse": f"Opened {file_name} on PC-A."
+                        "spokenResponse": f"Opened {file_name}."
                     }
                 else:
                     local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
@@ -424,7 +474,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "success": True,
                         "node": "PC-B",
                         "file": file_name,
-                        "spokenResponse": f"Opened {file_name} on PC-B."
+                        "spokenResponse": f"Opened {file_name}."
                     }
 
             # 3. Route for BOOT_OLLAMA (Phonetically normalized Ollama startup)

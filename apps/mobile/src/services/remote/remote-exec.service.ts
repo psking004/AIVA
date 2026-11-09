@@ -11,12 +11,12 @@ import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
 
 export type NodeTarget = 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT';
+export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION';
 
 export interface RemoteExecIntent {
   isRemoteExec: boolean;
   targetNode: 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE' | 'TYPE_TEXT';
+  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION';
   application?: string;
   command?: string;
   text?: string;
@@ -181,10 +181,39 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 1. Voice Dictation Mode (e.g. "type print hello world", "dictate def foo():", "write line ...", "add line ...")
+  // 1. Explicit Dictation Mode Toggle ("start typing", "stop typing", "begin dictation", "exit dictation")
+  if (/^(?:start\s+typing|start\s+dictation|begin\s+typing|begin\s+dictation|enable\s+dictation)$/i.test(strippedQuery)) {
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'START_DICTATION',
+      command: 'START_DICTATION',
+      query: clean,
+    };
+  }
+  if (/^(?:stop\s+typing|stop\s+dictation|exit\s+dictation|finish\s+typing|end\s+typing|end\s+dictation|disable\s+dictation|close\s+dictation)$/i.test(strippedQuery)) {
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'STOP_DICTATION',
+      command: 'STOP_DICTATION',
+      query: clean,
+    };
+  }
+
+  // 2. Explicit Voice Dictation: "type <content>", "dictate <content>", "write line <content>", "add line <content>"
   const typeMatch = clean.match(/^(?:type|dictate|insert|write\s+line|add\s+line)\s+(.+)$/i);
   if (typeMatch && typeMatch[1]) {
     const textToType = typeMatch[1].trim();
+    if (/^(?:stop|exit|cancel|close|finish)$/i.test(textToType)) {
+      return {
+        isRemoteExec: true,
+        targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+        action: 'STOP_DICTATION',
+        command: 'STOP_DICTATION',
+        query: clean,
+      };
+    }
     return {
       isRemoteExec: true,
       targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,

@@ -145,9 +145,21 @@ try {
     Log-Success "Stage 2 Complete: Blank file created and editor auto-launched.`n"
 
     # -------------------------------------------------------------
-    # STAGE 3: PC-B Real-Time Voice Dictation Append (TYPE_TEXT)
+    # STAGE 3: PC-B Explicit Dictation Mode & Voice Append (TYPE_TEXT)
     # -------------------------------------------------------------
-    Log-Stage 3 "PC-B Real-Time Voice Dictation Append (TYPE_TEXT)"
+    Log-Stage 3 "PC-B Explicit Dictation Mode & Voice Append (TYPE_TEXT)"
+
+    Write-Host "  Triggering START_DICTATION toggle..."
+    $startDictPayload = @{
+        action = "START_DICTATION"
+        targetNode = "PC-B"
+    } | ConvertTo-Json
+    $startDictResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $startDictPayload -TimeoutSec 10
+    Write-Host "  Response: $($startDictResp | ConvertTo-Json -Compress)"
+    if ($startDictResp.spokenResponse -notmatch "Dictation started") {
+        throw "START_DICTATION failed to return 'Dictation started.'"
+    }
+    Log-Success "Explicit dictation mode engaged successfully."
 
     $line1 = "import sys"
     $line2 = 'print("AIVA tri-node harness verified")'
@@ -174,6 +186,18 @@ try {
 
     Start-Sleep -Milliseconds 500
 
+    Write-Host "  Triggering STOP_DICTATION toggle..."
+    $stopDictPayload = @{
+        action = "STOP_DICTATION"
+        targetNode = "PC-B"
+    } | ConvertTo-Json
+    $stopDictResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $stopDictPayload -TimeoutSec 10
+    Write-Host "  Response: $($stopDictResp | ConvertTo-Json -Compress)"
+    if ($stopDictResp.spokenResponse -notmatch "Dictation stopped") {
+        throw "STOP_DICTATION failed to return 'Dictation stopped.'"
+    }
+    Log-Success "Explicit dictation mode stopped successfully."
+
     $fileContent = Get-Content -Path $pcbTestFile -Raw
     Write-Host "  Inspecting current file content:`n---`n$fileContent---"
 
@@ -183,18 +207,19 @@ try {
     Log-Success "Dictated lines successfully appended to $pcbTestFile in real time."
 
     $PassedStages++
-    Log-Success "Stage 3 Complete: Real-time voice dictation confirmed.`n"
+    Log-Success "Stage 3 Complete: Explicit voice dictation toggle and appending confirmed.`n"
 
     # -------------------------------------------------------------
-    # STAGE 4: PC-A WinRM Remote File Creation & Verification
+    # STAGE 4: PC-A SMB / WinRM Remote File Creation & Verification
     # -------------------------------------------------------------
-    Log-Stage 4 "PC-A WinRM Remote File Creation & Verification"
+    Log-Stage 4 "PC-A SMB / WinRM Remote File Creation & Verification"
 
     $secPass = ConvertTo-SecureString $PcaPass -AsPlainText -Force
     $pcaCred = New-Object System.Management.Automation.PSCredential($PcaUser, $secPass)
     $pcaUri = "http://${PcaHost}:${PcaWinRMPort}/wsman"
     $pcaWorkspace = "C:\Users\$PcaUser\AIVA_Workspace"
     $pcaTestFile = "$pcaWorkspace\test_harness_pca.py"
+    $pcaSmbFile = "\\${PcaHost}\C$\AIVA_Workspace\test_harness_pca.py"
     $pcaStagedMirror = "C:\AIVA_Workspace\pca\test_harness_pca.py"
 
     if (Test-Path $pcaStagedMirror) {
@@ -219,7 +244,7 @@ try {
 
     Start-Sleep -Seconds 1
 
-    Write-Host "  Verifying PC-A remote file presence and workspace mirror..."
+    Write-Host "  Verifying PC-A remote file presence (SMB, WinRM, workspace mirror)..."
     $directWinRMVerified = $false
     try {
         $pcaExists = Invoke-Command -ConnectionUri $pcaUri -Credential $pcaCred -ScriptBlock {
@@ -234,10 +259,22 @@ try {
         Write-Host "  WinRM direct probe note: $($_.Exception.Message)" -ForegroundColor Gray
     }
 
+    $smbVerified = $false
+    try {
+        if (Test-Path $pcaSmbFile) {
+            $smbVerified = $true
+            Log-Success "SMB administrative share check confirmed $pcaSmbFile on PC-A."
+        }
+    } catch {
+        Write-Host "  SMB direct probe note: $($_.Exception.Message)" -ForegroundColor Gray
+    }
+
     if (Test-Path $pcaStagedMirror) {
         Log-Success "PC-A workspace mirror confirmed at $pcaStagedMirror."
-    } elseif (-not $directWinRMVerified) {
-        throw "Neither direct WinRM nor local mirror verified for PC-A file!"
+    } elseif ($directWinRMVerified -or $smbVerified) {
+        Log-Success "Remote PC-A file presence confirmed via network protocol."
+    } else {
+        throw "Neither direct WinRM/SMB nor local mirror verified for PC-A file!"
     }
 
     Write-Host "  Testing TYPE_TEXT on PC-A active session..."
@@ -261,7 +298,7 @@ try {
     }
 
     $PassedStages++
-    Log-Success "Stage 4 Complete: PC-A WinRM remote file execution verified.`n"
+    Log-Success "Stage 4 Complete: PC-A remote file creation & verification completed.`n"
 
     # -------------------------------------------------------------
     # STAGE 5: Mobile ADB Deep-Link Voice Injection & Intent Telemetry

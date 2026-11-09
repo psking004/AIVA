@@ -71,3 +71,4 @@ projects/
 *.mp3
 android-aiva-log.txt
 mobile_tokens.json
+release/

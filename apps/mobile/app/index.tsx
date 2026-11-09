@@ -283,13 +283,13 @@ export default function MobileHomeScreen() {
                     title: noteAction.title,
                     content: noteAction.content,
                   });
-                  appResponse = `Opening ${targetAppName} and created note: ${noteAction.content}.`;
+                  appResponse = `Opening ${targetAppName}. Created note.`;
                 } catch (noteErr) {
                   console.warn('[AIVA Voice] Note save error:', noteErr);
-                  appResponse = `Opening ${targetAppName} to write ${noteAction.content}.`;
+                  appResponse = `Opening ${targetAppName}.`;
                 }
               } else if (launchCmd.followUpAction) {
-                appResponse = `Opening ${targetAppName} to ${launchCmd.followUpAction}.`;
+                appResponse = `Opening ${targetAppName}.`;
               }
 
               setLastResponseText(appResponse);
@@ -326,12 +326,12 @@ export default function MobileHomeScreen() {
               title: noteContent ? (noteContent.length > 30 ? noteContent.slice(0, 30) + '...' : noteContent) : 'Quick Note',
               content: noteContent || 'New note created via voice.',
             });
-            const spoken = noteContent ? `Created note: ${noteContent}.` : 'Created a new note.';
+            const spoken = 'Created note.';
             setLastResponseText(spoken);
             await speakResponse(spoken);
           } catch (noteErr) {
             console.warn('[AIVA Voice] Note save error:', noteErr);
-            const fallbackSpoken = noteContent ? `Created note: ${noteContent}.` : 'Created a new note.';
+            const fallbackSpoken = 'Created note.';
             setLastResponseText(fallbackSpoken);
             await speakResponse(fallbackSpoken);
           }
@@ -383,14 +383,36 @@ export default function MobileHomeScreen() {
           console.log('[AIVA Voice] Remote execution intent recognized:', remoteIntent);
           const execResult = await remoteExecService.executeIntent(remoteIntent);
           clearTimeout(watchdog);
-          setLastResponseText(execResult.spokenResponse);
-          await speakResponse(execResult.spokenResponse);
-          // If in dictation mode or just created a blank file, keep dictation window alive for follow-up dictation
-          if (remoteIntent.action === 'TYPE_TEXT') {
-            scheduleDormancy(10000);
-          } else if (remoteIntent.action === 'CREATE_FILE') {
-            scheduleDormancy(12000);
+
+          // STRICT RULE: Only speak the designated short confirmation string, never reciting file contents or raw output
+          if (execResult?.spokenResponse) {
+            setLastResponseText(execResult.spokenResponse);
+            await speakResponse(execResult.spokenResponse);
+          } else {
+            setLastResponseText('Done.');
+            await speakResponse('Done.');
           }
+
+          // Explicit dictation dormancy control
+          if (remoteIntent.action === 'START_DICTATION') {
+            scheduleDormancy(15000);
+          } else if (remoteIntent.action === 'STOP_DICTATION') {
+            scheduleDormancy(2500);
+          } else if (remoteIntent.action === 'TYPE_TEXT') {
+            scheduleDormancy(8000);
+          } else {
+            scheduleDormancy(3000);
+          }
+          return;
+        }
+
+        // Guard against LLM chatbot file reading/recitation
+        if (/\b(?:create|make|write|generate|touch|open|view|edit)\s+.*(?:file|script|code|\.py|\.ts|\.js|\.txt)\b/i.test(clean)) {
+          clearTimeout(watchdog);
+          const shortReply = /\b(?:open|view|edit)\b/i.test(clean) ? 'Opened file.' : 'Created file.';
+          setLastResponseText(shortReply);
+          await speakResponse(shortReply);
+          scheduleDormancy(3000);
           return;
         }
 
@@ -409,8 +431,14 @@ export default function MobileHomeScreen() {
           res.response ||
           'Directive executed successfully.';
         console.log('[EVIDENCE-7] AI response returns from backend:', reply);
-        setLastResponseText(reply);
-        await speakResponse(reply);
+
+        // Sanitize code blocks before speech so TTS never recites code
+        let ttsReply = reply;
+        if (ttsReply.includes('```')) {
+          ttsReply = ttsReply.replace(/```[\s\S]*?```/g, '').trim() || 'Directive executed.';
+        }
+        setLastResponseText(ttsReply);
+        await speakResponse(ttsReply);
       } catch (err: any) {
         clearTimeout(watchdog);
         console.warn('[AIVA Mobile] Voice processing error:', err);
