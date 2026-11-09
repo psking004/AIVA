@@ -1,9 +1,12 @@
 package com.aiva.personal.ai.wakeword
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -41,6 +44,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         private const val TAG = "AivaVoiceModule"
         const val MODULE_NAME = "AivaVoiceModule"
         private const val ACOUSTIC_SETTLING_DELAY_MS = 600L
+        const val ACTION_VOICE_COMMAND = "com.aiva.action.VOICE_COMMAND"
     }
 
     override fun getName(): String = MODULE_NAME
@@ -52,6 +56,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     private var isListening = false
     private var isSpeaking = false
     private var lastTtsEndTime: Long = 0L
+    private var voiceCommandReceiver: BroadcastReceiver? = null
 
     init {
         mainHandler.post {
@@ -61,6 +66,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                 Log.e(TAG, "Failed to instantiate TextToSpeech: ${e.message}")
             }
         }
+        registerVoiceCommandReceiver()
     }
 
     override fun onInit(status: Int) {
@@ -675,6 +681,51 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun registerVoiceCommandReceiver() {
+        voiceCommandReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == ACTION_VOICE_COMMAND) {
+                    val cmd = intent.getStringExtra("command")
+                        ?: intent.getStringExtra("text")
+                        ?: intent.getStringExtra("query")
+                        ?: intent.getStringExtra("voice_command")
+
+                    if (!cmd.isNullOrBlank()) {
+                        Log.i(TAG, "[AIVA Broadcast] Received background voice command: $cmd")
+                        val resultsArrayPlural = Arguments.createArray().apply {
+                            pushString(cmd)
+                        }
+                        val resultsMapPlural = Arguments.createMap().apply {
+                            putArray("value", resultsArrayPlural)
+                            putString("text", cmd)
+                            putBoolean("isFinal", true)
+                        }
+                        val resultsMapSingular = Arguments.createMap().apply {
+                            putString("text", cmd)
+                            putBoolean("isFinal", true)
+                        }
+                        sendEvent("onSpeechResults", resultsMapPlural)
+                        sendEvent("onSpeechResult", resultsMapSingular)
+                    } else {
+                        Log.w(TAG, "[AIVA Broadcast] Received VOICE_COMMAND broadcast with empty command")
+                    }
+                }
+            }
+        }
+
+        try {
+            val filter = IntentFilter(ACTION_VOICE_COMMAND)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                reactContext.registerReceiver(voiceCommandReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                reactContext.registerReceiver(voiceCommandReceiver, filter)
+            }
+            Log.i(TAG, "Registered exported broadcast receiver for $ACTION_VOICE_COMMAND")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register broadcast receiver for $ACTION_VOICE_COMMAND: ${e.message}")
+        }
+    }
+
     @ReactMethod
     fun addListener(eventName: String) {}
 
@@ -683,6 +734,12 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
     override fun onCatalystInstanceDestroy() {
         super.onCatalystInstanceDestroy()
+        try {
+            voiceCommandReceiver?.let {
+                reactContext.unregisterReceiver(it)
+                voiceCommandReceiver = null
+            }
+        } catch (_: Exception) {}
         mainHandler.post {
             try {
                 speechRecognizer?.destroy()
