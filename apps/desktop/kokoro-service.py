@@ -277,26 +277,29 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     except Exception as le:
                         sys.stderr.write(f"[CREATE_FILE] Local staging error: {le}\n")
 
-                    # 2. Attempt writing directly across the network SMB share to PC-A
-                    written_smb = False
-                    try:
-                        remote_target_path = os.path.join(pca_share, file_name)
-                        with open(remote_target_path, "w", encoding="utf-8") as f:
-                            f.write("")
-                        written_smb = True
-                        sys.stderr.write(f"[CREATE_FILE] Successfully created file via SMB share: {remote_target_path}\n")
-                    except Exception as smb_err:
-                        sys.stderr.write(f"[CREATE_FILE] SMB share write note: {smb_err}\n")
+                    # 2. Non-blocking asynchronous SMB share and WinRM creation attempts
+                    def async_pca_create(f_name):
+                        # Attempt writing across the direct physical network share: \\10.84.73.194\AIVA_Workspace
+                        try:
+                            remote_target_path = os.path.join(pca_share, f_name)
+                            with open(remote_target_path, "w", encoding="utf-8") as f:
+                                f.write("")
+                            sys.stderr.write(f"[CREATE_FILE] Successfully created file via SMB share: {remote_target_path}\n")
+                            return
+                        except Exception as smb_err:
+                            sys.stderr.write(f"[CREATE_FILE] SMB share write note: {smb_err}\n")
 
-                    # 3. Asynchronous WinRM / Admin share fallback attempt
-                    def async_pca_fallback(f_name):
-                        if not written_smb:
-                            try:
-                                admin_share = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
-                                with open(admin_share, "w", encoding="utf-8") as af:
-                                    af.write("")
-                            except Exception:
-                                pass
+                        # Fallback 1: Admin share
+                        try:
+                            admin_share = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
+                            with open(admin_share, "w", encoding="utf-8") as af:
+                                af.write("")
+                            sys.stderr.write(f"[CREATE_FILE] Successfully created file via admin SMB: {admin_share}\n")
+                            return
+                        except Exception:
+                            pass
+
+                        # Fallback 2: WinRM command
                         try:
                             remote_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ [System.IO.File]::WriteAllText('C:\\AIVA_Workspace\\{f_name}', '') }}\""
                             subprocess.run(remote_cmd, shell=True, timeout=8)
@@ -304,7 +307,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                             pass
 
                     import threading
-                    threading.Thread(target=async_pca_fallback, args=(file_name,), daemon=True).start()
+                    threading.Thread(target=async_pca_create, args=(file_name,), daemon=True).start()
 
                     # Open local editor mirror for immediate user interaction
                     subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
@@ -312,7 +315,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "success": True,
                         "node": "PC-A",
                         "file": file_name,
-                        "spokenResponse": f"Created blank file {file_name} on PC-A compute node." if written_smb else f"Created {file_name} on PC-A."
+                        "spokenResponse": f"Created {file_name} on PC-A."
                     }
                 else:
                     # PC-B Local Execution (Pure Blank File + Auto-Launch)
