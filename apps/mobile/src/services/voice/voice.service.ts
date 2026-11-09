@@ -402,6 +402,19 @@ class AivaVoiceService {
     return false;
   }
 
+  async createNoteWithText(noteText: string, targetPackage: string = 'com.vivo.notes'): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.createNoteWithText) {
+      try {
+        await AivaVoiceModule.createNoteWithText(noteText, targetPackage);
+        return true;
+      } catch (err: any) {
+        console.warn(`[AIVA Voice] Failed to create note with text in "${targetPackage}", falling back to launch:`, err?.message);
+        return this.launchApp(targetPackage);
+      }
+    }
+    return false;
+  }
+
   subscribeState(listener: (state: VoiceState) => void) {
     this.stateListeners.push(listener);
     return () => {

@@ -262,52 +262,49 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 ACTIVE_SESSION["dictation_active"] = False
 
                 if target_node == "PC-A":
+                    pca_share = r"\\10.84.73.194\AIVA_Workspace"
+                    pca_local_mirror = r"C:\AIVA_Workspace\pca"
                     workspace_dir = r"C:\AIVA_Workspace"
-                    remote_path = f"{workspace_dir}\\{file_name}"
+                    os.makedirs(pca_local_mirror, exist_ok=True)
+                    os.makedirs(workspace_dir, exist_ok=True)
 
                     # 1. Guarantee local staging of blank file on host immediately
                     try:
-                        os.makedirs(os.path.join(workspace_dir, "pca"), exist_ok=True)
                         with open(os.path.join(workspace_dir, file_name), "w", encoding="utf-8") as f:
                             f.write("")
-                        with open(os.path.join(workspace_dir, "pca", file_name), "w", encoding="utf-8") as f:
+                        with open(os.path.join(pca_local_mirror, file_name), "w", encoding="utf-8") as f:
                             f.write("")
                     except Exception as le:
                         sys.stderr.write(f"[CREATE_FILE] Local staging error: {le}\n")
 
-                    # 2. Non-blocking asynchronous SMB share and WinRM creation attempts
-                    def async_pca_create(f_name, r_path):
-                        # SMB share attempt
-                        try:
-                            smb_dir = r"\\10.84.73.194\C$\AIVA_Workspace"
-                            smb_path = os.path.join(smb_dir, f_name)
-                            os.makedirs(smb_dir, exist_ok=True)
-                            with open(smb_path, "w", encoding="utf-8") as sf:
-                                sf.write("")
-                            sys.stderr.write(f"[CREATE_FILE] Successfully created blank file via SMB: {smb_path}\n")
-                        except Exception as smb_err:
-                            sys.stderr.write(f"[CREATE_FILE] SMB share creation note: {smb_err}\n")
+                    # 2. Attempt writing directly across the network SMB share to PC-A
+                    written_smb = False
+                    try:
+                        remote_target_path = os.path.join(pca_share, file_name)
+                        with open(remote_target_path, "w", encoding="utf-8") as f:
+                            f.write("")
+                        written_smb = True
+                        sys.stderr.write(f"[CREATE_FILE] Successfully created file via SMB share: {remote_target_path}\n")
+                    except Exception as smb_err:
+                        sys.stderr.write(f"[CREATE_FILE] SMB share write note: {smb_err}\n")
 
-                        # WinRM attempt
+                    # 3. Asynchronous WinRM / Admin share fallback attempt
+                    def async_pca_fallback(f_name):
+                        if not written_smb:
+                            try:
+                                admin_share = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
+                                with open(admin_share, "w", encoding="utf-8") as af:
+                                    af.write("")
+                            except Exception:
+                                pass
                         try:
-                            ps_script = f"""
-                            $sec = ConvertTo-SecureString 'AivaWinRM2025!' -AsPlainText -Force
-                            $cred = New-Object System.Management.Automation.PSCredential('alpha', $sec)
-                            try {{
-                                Invoke-Command -ComputerName 10.84.73.194 -Credential $cred -ScriptBlock {{
-                                    $dir = 'C:\\AIVA_Workspace'
-                                    if (-not (Test-Path $dir)) {{ [System.IO.Directory]::CreateDirectory($dir) | Out-Null }}
-                                    [System.IO.File]::WriteAllText('{r_path}', '')
-                                    Start-Process notepad.exe '{r_path}'
-                                }} -ErrorAction SilentlyContinue
-                            }} catch {{}}
-                            """
-                            subprocess.run(f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"{ps_script}\"", shell=True, capture_output=True, timeout=8)
+                            remote_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ [System.IO.File]::WriteAllText('C:\\AIVA_Workspace\\{f_name}', '') }}\""
+                            subprocess.run(remote_cmd, shell=True, timeout=8)
                         except Exception:
                             pass
 
                     import threading
-                    threading.Thread(target=async_pca_create, args=(file_name, remote_path), daemon=True).start()
+                    threading.Thread(target=async_pca_fallback, args=(file_name,), daemon=True).start()
 
                     # Open local editor mirror for immediate user interaction
                     subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
@@ -315,7 +312,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "success": True,
                         "node": "PC-A",
                         "file": file_name,
-                        "spokenResponse": f"Created {file_name} on PC-A."
+                        "spokenResponse": f"Created blank file {file_name} on PC-A compute node." if written_smb else f"Created {file_name} on PC-A."
                     }
                 else:
                     # PC-B Local Execution (Pure Blank File + Auto-Launch)
@@ -391,6 +388,13 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     if target_node == "PC-A":
                         # 1. Asynchronous SMB append attempt
                         def async_pca_append(f_name, txt):
+                            try:
+                                smb_path = os.path.join(r"\\10.84.73.194\AIVA_Workspace", f_name)
+                                with open(smb_path, "a", encoding="utf-8") as sf:
+                                    sf.write(txt + "\n")
+                                return
+                            except Exception:
+                                pass
                             try:
                                 smb_path = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
                                 with open(smb_path, "a", encoding="utf-8") as sf:

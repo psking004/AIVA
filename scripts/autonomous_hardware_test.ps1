@@ -244,7 +244,16 @@ try {
 
     Start-Sleep -Seconds 1
 
-    Write-Host "  Verifying PC-A remote file presence (SMB, WinRM, workspace mirror)..."
+    Write-Host "  Verifying PC-A remote file presence (SMB share, WinRM, workspace mirror)..."
+    $remoteSharePath = "\\${PcaHost}\AIVA_Workspace\test_harness_pca.py"
+    $stagedMirrorPath = "C:\AIVA_Workspace\pca\test_harness_pca.py"
+
+    $smbExists = Test-Path $remoteSharePath -ErrorAction SilentlyContinue
+    $mirrorExists = Test-Path $stagedMirrorPath -ErrorAction SilentlyContinue
+
+    Write-Host "  -> PC-A Physical Network Share Status: $smbExists"
+    Write-Host "  -> PC-A Staged Local Mirror Status:    $mirrorExists"
+
     $directWinRMVerified = $false
     try {
         $pcaExists = Invoke-Command -ConnectionUri $pcaUri -Credential $pcaCred -ScriptBlock {
@@ -259,22 +268,17 @@ try {
         Write-Host "  WinRM direct probe note: $($_.Exception.Message)" -ForegroundColor Gray
     }
 
-    $smbVerified = $false
-    try {
-        if (Test-Path $pcaSmbFile) {
-            $smbVerified = $true
-            Log-Success "SMB administrative share check confirmed $pcaSmbFile on PC-A."
-        }
-    } catch {
-        Write-Host "  SMB direct probe note: $($_.Exception.Message)" -ForegroundColor Gray
+    if ($smbExists) {
+        Log-Success "PC-A physical network SMB share confirmed at $remoteSharePath."
+    }
+    if ($mirrorExists) {
+        Log-Success "PC-A workspace mirror confirmed at $stagedMirrorPath."
     }
 
-    if (Test-Path $pcaStagedMirror) {
-        Log-Success "PC-A workspace mirror confirmed at $pcaStagedMirror."
-    } elseif ($directWinRMVerified -or $smbVerified) {
-        Log-Success "Remote PC-A file presence confirmed via network protocol."
+    if ($smbExists -or $mirrorExists -or $directWinRMVerified) {
+        Log-Success "PC-A Workspace Verification Successful."
     } else {
-        throw "Neither direct WinRM/SMB nor local mirror verified for PC-A file!"
+        throw "PC-A File Not Found on Remote Share, WinRM, or Mirror!"
     }
 
     Write-Host "  Testing TYPE_TEXT on PC-A active session..."
@@ -312,8 +316,8 @@ try {
     Write-Host "  Clearing logcat buffer..."
     adb -s $MobileDevice logcat -c
 
-    Write-Host "  Injecting voice deep link: 'create a new note in notes'..."
-    adb -s $MobileDevice shell am start -a android.intent.action.VIEW -d "aiva://voice?command=create%20a%20new%20note%20in%20notes" | Out-Null
+    Write-Host "  Injecting voice deep link: 'create a new note in notes about meeting at 5 PM'..."
+    adb -s $MobileDevice shell am start -a android.intent.action.VIEW -d "aiva://voice?command=create%20a%20new%20note%20in%20notes%20about%20meeting%20at%205%20PM" | Out-Null
     Start-Sleep -Seconds 3
 
     Write-Host "  Inspecting logcat for deep-link handling and voice execution..."

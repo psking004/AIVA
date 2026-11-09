@@ -288,6 +288,11 @@ export default function MobileHomeScreen() {
                   console.warn('[AIVA Voice] Note save error:', noteErr);
                   appResponse = `Opening ${targetAppName}.`;
                 }
+                try {
+                  await aivaVoiceService.createNoteWithText(noteAction.content, 'com.vivo.notes');
+                } catch {
+                  await aivaVoiceService.launchApp(targetAppName);
+                }
               } else if (launchCmd.followUpAction) {
                 appResponse = `Opening ${targetAppName}.`;
               }
@@ -309,32 +314,35 @@ export default function MobileHomeScreen() {
           }
         }
 
-        // 2. Prioritize Local Notes / Reminders / Lists Creation First (e.g. "Create a new note in notes", "Create a note buy milk", "Add reminder")
+        // 2. Prioritize Local Notes / Reminders / Lists Creation First (e.g. "Create a new note in notes about meeting at 5 PM", "Create a note buy milk")
         if (/\b(?:note|notes|list|reminder|memo)\b/i.test(clean) && !/\b(?:pca|pcb|pc\-?a|pc\-?b)\b/i.test(clean)) {
           clearTimeout(watchdog);
-          const noteContent = clean
+          const notePayload = clean
             .replace(/^(?:create|make|write|add|take|record)\s+(?:a\s+)?(?:new\s+)?(?:note|notes|list|reminder|memo)\s*(?:in\s+notes\s*)?(?:about|to|for|called|titled|with|saying|that|:)?\s*/i, '')
             .trim();
 
-          // If query mentions "in notes" or "open notes", launch the native notes app on the phone as well
-          if (/\b(?:in\s+notes|open\s+notes)\b/i.test(clean)) {
-            aivaVoiceService.launchApp('notes').catch(() => {});
-          }
+          const noteContent = notePayload || "New Note";
 
+          // 1. Persist asynchronously to backend/local store
           try {
             await aivaClient.createNote({
-              title: noteContent ? (noteContent.length > 30 ? noteContent.slice(0, 30) + '...' : noteContent) : 'Quick Note',
-              content: noteContent || 'New note created via voice.',
+              title: noteContent.slice(0, 30),
+              content: noteContent,
             });
-            const spoken = 'Created note.';
-            setLastResponseText(spoken);
-            await speakResponse(spoken);
-          } catch (noteErr) {
-            console.warn('[AIVA Voice] Note save error:', noteErr);
-            const fallbackSpoken = 'Created note.';
-            setLastResponseText(fallbackSpoken);
-            await speakResponse(fallbackSpoken);
+          } catch (err) {
+            console.warn('[AIVA Notes] DB sync skipped/warning:', err);
           }
+
+          // 2. Open native Notes app with populated text
+          try {
+            await aivaVoiceService.createNoteWithText(noteContent, 'com.vivo.notes');
+          } catch (err) {
+            await aivaVoiceService.launchApp('com.vivo.notes');
+          }
+
+          const spoken = 'Created note and opened Notes.';
+          setLastResponseText(spoken);
+          await speakResponse(spoken);
           scheduleDormancy(3000);
           return;
         }

@@ -641,6 +641,41 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun createNoteWithText(noteText: String, targetPackage: String?, promise: Promise) {
+        try {
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, noteText)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (!targetPackage.isNullOrEmpty()) {
+                    setPackage(targetPackage)
+                }
+            }
+
+            val pm = reactContext.packageManager
+            if (sendIntent.resolveActivity(pm) != null) {
+                reactContext.startActivity(sendIntent)
+                promise.resolve(true)
+            } else {
+                // Fallback: Launch note app launcher activity directly
+                val fallbackPkg = targetPackage ?: "com.vivo.notes"
+                val launchIntent = pm.getLaunchIntentForPackage(fallbackPkg)?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    putExtra(Intent.EXTRA_TEXT, noteText)
+                }
+                if (launchIntent != null) {
+                    reactContext.startActivity(launchIntent)
+                    promise.resolve(true)
+                } else {
+                    promise.reject("APP_NOT_FOUND", "Note package $fallbackPkg not found.")
+                }
+            }
+        } catch (e: Exception) {
+            promise.reject("CREATE_NOTE_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
     fun getVoiceState(promise: Promise) {
         val map = Arguments.createMap().apply {
             putBoolean("isListening", isListening)
