@@ -41,6 +41,14 @@ class MainActivity : ReactActivity() {
   }
 
   /**
+   * Required for React Native Linking module when launchMode="singleTask"
+   */
+  override fun onNewIntent(intent: android.content.Intent?) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+  }
+
+  /**
    * Returns the name of the main component registered from JavaScript. This is used to schedule
    * rendering of the component.
    */

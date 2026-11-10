@@ -402,6 +402,19 @@ class AivaVoiceService {
     return false;
   }
 
+  async createNoteDirect(content: string): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.createNoteDirect) {
+      try {
+        await AivaVoiceModule.createNoteDirect(content);
+        return true;
+      } catch (err: any) {
+        console.warn('[AIVA Voice] Direct note creation failed, falling back to createNoteWithText:', err?.message);
+        return this.createNoteWithText(content, 'com.vivo.notes');
+      }
+    }
+    return this.createNoteWithText(content, 'com.vivo.notes');
+  }
+
   async createNoteWithText(noteText: string, targetPackage: string = 'com.vivo.notes'): Promise<boolean> {
     if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.createNoteWithText) {
       try {

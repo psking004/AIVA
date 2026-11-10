@@ -12,7 +12,7 @@ import json
 import re
 import shutil
 import fnmatch
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import soundfile as sf
 
 # Strategic Systems Engine (SSE) Dynamic Import
@@ -470,7 +470,19 @@ def execute_install_package(package_name, manager="winget", target_node="PC-B"):
         if proc.returncode == 0 or any(s in out_lower for s in already_installed_signals):
             return True, f"Successfully installed {package_name} on PC-B."
 
-        # 2. Elevated PowerShell execution fallback
+        # 2. Try with user scope fallback
+        cmd_user = [
+            winget_bin, "install", "--id", pkg_id, "-e",
+            "--silent", "--accept-source-agreements", "--accept-package-agreements",
+            "--scope", "user",
+            "--disable-interactivity"
+        ]
+        proc_user = subprocess.run(cmd_user, capture_output=True, text=True, timeout=180)
+        out_u = (proc_user.stdout or "") + " " + (proc_user.stderr or "")
+        if proc_user.returncode == 0 or any(s in out_u.lower() for s in already_installed_signals):
+            return True, f"Successfully installed {package_name} on PC-B."
+
+        # 3. Elevated PowerShell execution fallback
         elevated_ps = f'Start-Process "{winget_bin}" -ArgumentList "install --id {pkg_id} -e --silent --accept-source-agreements --accept-package-agreements --disable-interactivity" -Verb RunAs -Wait -PassThru'
         elevated_run = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", elevated_ps],
@@ -576,7 +588,7 @@ def execute_shell_command(command, cwd=None, timeout=60, target_node="PC-B"):
     if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
         pca_ip = "10.84.73.194"
         escaped = command.replace("'", "''")
-        winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {escaped} }}"'
+        winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ cmd.exe /c \'{escaped}\' }}"'
         try:
             res = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
             return res.returncode == 0, res.stdout, res.stderr, res.returncode
@@ -1548,7 +1560,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
 def run_server(port=5050):
     init_engine()
-    server = HTTPServer(("0.0.0.0", port), KokoroHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", port), KokoroHandler)
     sys.stderr.write(f"[KOKORO TTS] Daemon listening on http://0.0.0.0:{port}\n")
     print(f"[KOKORO TTS] Kokoro TTS Daemon running on http://0.0.0.0:{port}", flush=True)
     try:

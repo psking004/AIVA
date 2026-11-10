@@ -1,6 +1,7 @@
 package com.aiva.personal.ai.wakeword
 
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -633,12 +634,69 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun createNoteDirect(content: String, promise: Promise) {
+        try {
+            val pm = reactContext.packageManager
+            var launched = false
+
+            // 1. Attempt explicit Vivo Notes internal component
+            try {
+                val directIntent = Intent().apply {
+                    component = ComponentName("com.vivo.notes", "com.vivo.notes.editor.EditorActivity")
+                    action = Intent.ACTION_VIEW
+                    putExtra("content", content)
+                    putExtra("extra_text", content)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                if (directIntent.resolveActivity(pm) != null) {
+                    reactContext.startActivity(directIntent)
+                    launched = true
+                }
+            } catch (_: Exception) {
+                launched = false
+            }
+
+            if (!launched) {
+                // 2. Dispatch ACTION_SEND targeting com.vivo.notes and trigger accessibility auto-click
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    setPackage("com.vivo.notes")
+                    putExtra(Intent.EXTRA_TEXT, content)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                if (sendIntent.resolveActivity(pm) != null) {
+                    reactContext.startActivity(sendIntent)
+                } else {
+                    // 3. Fallback: launch Notes main activity
+                    val launchIntent = pm.getLaunchIntentForPackage("com.vivo.notes")?.apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        putExtra(Intent.EXTRA_TEXT, content)
+                    }
+                    if (launchIntent != null) {
+                        reactContext.startActivity(launchIntent)
+                    }
+                }
+            }
+
+            // Immediately trigger accessibility service to auto-click "Add to new note" if SelectorActivity displays
+            AivaAccessibilityService.triggerVivoNotesAdd(250)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("NOTE_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
     fun createNoteWithText(noteText: String, targetPackage: String?, promise: Promise) {
+        if (targetPackage == "com.vivo.notes" || targetPackage.isNullOrEmpty()) {
+            createNoteDirect(noteText, promise)
+            return
+        }
         try {
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
                 putExtra(Intent.EXTRA_TEXT, noteText)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 if (!targetPackage.isNullOrEmpty()) {
                     setPackage(targetPackage)
                 }
@@ -649,10 +707,9 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                 reactContext.startActivity(sendIntent)
                 promise.resolve(true)
             } else {
-                // Fallback: Launch note app launcher activity directly
                 val fallbackPkg = targetPackage ?: "com.vivo.notes"
                 val launchIntent = pm.getLaunchIntentForPackage(fallbackPkg)?.apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     putExtra(Intent.EXTRA_TEXT, noteText)
                 }
                 if (launchIntent != null) {
@@ -668,7 +725,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun resolveContactToPhoneNumber(query: String): String? {
-        val cleanQuery = query.trim()
+        val cleanQuery = query.trim().replaceFirst(Regex("^(?:to|for)\\s+", RegexOption.IGNORE_CASE), "").trim()
         if (cleanQuery.isBlank()) return null
 
         // If it's already a raw number with digits, return sanitized digits
@@ -762,10 +819,10 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     fun sendWhatsAppMessage(target: String, messageText: String, promise: Promise) {
         try {
             val phoneNumber = resolveContactToPhoneNumber(target)
+            val cleanPhone = phoneNumber?.replace(Regex("[^0-9]"), "")?.trim() ?: ""
             val encodedMessage = URLEncoder.encode(messageText, "UTF-8")
 
-            val url = if (!phoneNumber.isNullOrBlank()) {
-                val cleanPhone = phoneNumber.replace("+", "")
+            val url = if (cleanPhone.isNotBlank()) {
                 "https://api.whatsapp.com/send?phone=$cleanPhone&text=$encodedMessage"
             } else {
                 "https://api.whatsapp.com/send?text=$encodedMessage"
@@ -773,31 +830,32 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                 setPackage("com.whatsapp")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
 
             val pm = reactContext.packageManager
             if (intent.resolveActivity(pm) != null) {
                 reactContext.startActivity(intent)
-                promise.resolve(true)
             } else {
                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, messageText)
                     setPackage("com.whatsapp")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
                 if (sendIntent.resolveActivity(pm) != null) {
                     reactContext.startActivity(sendIntent)
-                    promise.resolve(true)
                 } else {
                     val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     }
                     reactContext.startActivity(browserIntent)
-                    promise.resolve(true)
                 }
             }
+
+            // Trigger accessibility auto-click for WhatsApp send button
+            AivaAccessibilityService.triggerWhatsAppAutoSend(800)
+            promise.resolve(true)
         } catch (e: Exception) {
             Log.e(TAG, "sendWhatsAppMessage error: ${e.message}")
             promise.reject("WHATSAPP_FAILED", e.message)

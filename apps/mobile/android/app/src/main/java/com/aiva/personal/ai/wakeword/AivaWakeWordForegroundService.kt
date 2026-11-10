@@ -180,11 +180,12 @@ class AivaWakeWordForegroundService : Service() {
     }
 
     @Synchronized
-    private fun startListening() {
-        if (isRunning && audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-            return
-        }
-        stopListening()
+    private fun initAudioRecord(): Boolean {
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (_: Exception) {}
+        audioRecord = null
 
         val bufferSize = AudioRecord.getMinBufferSize(
             TwoStageWakeWordDetector.SAMPLE_RATE,
@@ -192,82 +193,93 @@ class AivaWakeWordForegroundService : Service() {
             AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(TwoStageWakeWordDetector.FRAME_SIZE * 2)
 
-        try {
-            audioRecord = AudioRecord(
+        return try {
+            val ar = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 TwoStageWakeWordDetector.SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
                 bufferSize
             )
-
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.w(TAG, "AudioRecord initialization failed (state != INITIALIZED). Scheduling retry ($retryCount/$MAX_RETRIES)")
-                scheduleRetry()
-                return
-            }
-
-            audioRecord?.startRecording()
-            if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-                Log.w(TAG, "AudioRecord startRecording failed. Scheduling retry ($retryCount/$MAX_RETRIES)")
-                scheduleRetry()
-                return
-            }
-
-            isRunning = true
-            retryCount = 0
-
-            recordingThread = Thread({
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
-                val audioBuffer = ShortArray(TwoStageWakeWordDetector.FRAME_SIZE)
-
-                while (isRunning) {
-                    val ar = audioRecord ?: break
-                    val readCount = ar.read(audioBuffer, 0, audioBuffer.size)
-                    if (readCount > 0) {
-                        detector.processFrame(audioBuffer, readCount)
-                    } else if (readCount < 0) {
-                        Log.w(TAG, "AudioRecord read returned error code: $readCount")
-                        break
-                    }
+            if (ar.state != AudioRecord.STATE_INITIALIZED) {
+                Log.w(TAG, "AudioRecord state != INITIALIZED")
+                try { ar.release() } catch (_: Exception) {}
+                false
+            } else {
+                ar.startRecording()
+                if (ar.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    Log.w(TAG, "AudioRecord recordingState != RECORDSTATE_RECORDING")
+                    try { ar.release() } catch (_: Exception) {}
+                    false
+                } else {
+                    audioRecord = ar
+                    Log.i(TAG, "AudioRecord initialized and recording successfully")
+                    true
                 }
-                if (isRunning) {
-                    Log.w(TAG, "Recording loop exited unexpectedly while isRunning=true. Scheduling restart...")
-                    serviceHandler.post { scheduleRetry() }
-                }
-            }, "AivaWakeWordAudioThread")
-
-            recordingThread?.priority = Thread.MAX_PRIORITY
-            recordingThread?.start()
-            Log.i(TAG, "AIVA wake-word listening loop active")
-
-        } catch (e: SecurityException) {
-            Log.e(TAG, "Microphone permission missing for wake-word service: ${e.message}")
-            isRunning = false
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting AudioRecord: ${e.message}. Scheduling retry...")
-            scheduleRetry()
+            Log.w(TAG, "Exception initializing AudioRecord: ${e.message}")
+            false
         }
     }
 
-    private fun scheduleRetry() {
-        isRunning = false
-        try {
-            audioRecord?.stop()
-            audioRecord?.release()
-        } catch (_: Exception) {}
-        audioRecord = null
+    @Synchronized
+    private fun startListening() {
+        if (isRunning && recordingThread?.isAlive == true) {
+            return
+        }
+        stopListening()
+        isRunning = true
 
-        if (retryCount < MAX_RETRIES) {
-            retryCount++
-            serviceHandler.postDelayed({
-                if (batteryManager.getMode() != BatteryMode.ULTRA_LOW_POWER) {
-                    startListening()
+        recordingThread = Thread({
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            val audioBuffer = ShortArray(TwoStageWakeWordDetector.FRAME_SIZE)
+
+            while (isRunning) {
+                if (audioRecord == null || audioRecord?.state != AudioRecord.STATE_INITIALIZED || audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    Log.i(TAG, "Watchdog: Re-initializing unready AudioRecord...")
+                    if (!initAudioRecord()) {
+                        try { Thread.sleep(800) } catch (_: InterruptedException) { break }
+                        continue
+                    }
                 }
-            }, RETRY_DELAY_MS)
-        } else {
-            Log.w(TAG, "Max AudioRecord retry limit reached ($MAX_RETRIES). Will resume on next cycle.")
-            retryCount = 0
+
+                val ar = audioRecord
+                if (ar == null) {
+                    try { Thread.sleep(500) } catch (_: InterruptedException) { break }
+                    continue
+                }
+
+                val readBytes = try {
+                    ar.read(audioBuffer, 0, audioBuffer.size)
+                } catch (e: Exception) {
+                    -1
+                }
+
+                if (readBytes <= 0) {
+                    Log.w(TAG, "Watchdog: AudioRecord read zero/error ($readBytes). Re-arming HAL...")
+                    try {
+                        ar.stop()
+                        ar.release()
+                    } catch (_: Exception) {}
+                    audioRecord = null
+                    try { Thread.sleep(800) } catch (_: InterruptedException) { break }
+                    continue
+                }
+
+                detector.processFrame(audioBuffer, readBytes)
+            }
+            Log.i(TAG, "AivaWakeWordAudioThread loop ended (isRunning=$isRunning)")
+        }, "AivaWakeWordWatchdog")
+
+        recordingThread?.priority = Thread.MAX_PRIORITY
+        recordingThread?.start()
+        Log.i(TAG, "AIVA wake-word listening loop active with resilient watchdog")
+    }
+
+    private fun scheduleRetry() {
+        if (batteryManager.getMode() != BatteryMode.ULTRA_LOW_POWER) {
+            startListening()
         }
     }
 
@@ -278,7 +290,8 @@ class AivaWakeWordForegroundService : Service() {
             audioRecord?.stop()
             audioRecord?.release()
             audioRecord = null
-            recordingThread?.join(500)
+            recordingThread?.interrupt()
+            recordingThread?.join(300)
             recordingThread = null
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping audio capture: ${e.message}")

@@ -271,9 +271,10 @@ export default function MobileHomeScreen() {
         }
 
         // Native WhatsApp Messages (e.g. "send WhatsApp message to Amma saying I will be there soon", "WhatsApp John hello", "message Mom on WhatsApp with I am coming")
-        const waMatch = clean.match(/^(?:send\s+)?(?:a\s+)?(?:whatsapp|whatsapp\s+message)\s+(?:to\s+)?(.+?)\s+(?:saying|that|with|:)?\s*(.+)$/i) ||
+        const waMatch = clean.match(/^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+message|whatsapp)\s+(?:to\s+)?(.+?)\s+(?:saying|that|with|:)\s+(.+)$/i) ||
+                        clean.match(/^(?:send\s+)?(?:a\s+)?(?:whatsapp\s+message|whatsapp)\s+to\s+([^\s]+)\s+(.+)$/i) ||
                         clean.match(/^(?:send\s+)?(?:message|msg|text)\s+(?:to\s+)?(.+?)\s+(?:on|via)\s+whatsapp\s+(?:saying|that|with|:)?\s*(.+)$/i) ||
-                        clean.match(/^whatsapp\s+(.+?)\s+(?:saying|that|with|:)?\s*(.+)$/i);
+                        clean.match(/^whatsapp\s+([^\s]+)\s+(?:saying|that|with|:)?\s*(.+)$/i);
         if (waMatch) {
           clearTimeout(watchdog);
           const recipient = waMatch[1].trim();
