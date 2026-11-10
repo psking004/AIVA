@@ -74,6 +74,8 @@ def init_engine():
 
 import webbrowser
 import subprocess
+import urllib.parse
+import shutil
 
 # Registry of supported applications and web services
 APP_REGISTRY = {
@@ -138,85 +140,101 @@ APP_REGISTRY = {
     "taskmgr": "taskmgr.exe",
     "settings": "ms-settings:",
     "windows settings": "ms-settings:",
+    "camera": "microsoft.windows.camera:",
+    "store": "ms-windows-store:",
+    "photos": "ms-photos:",
 }
 
-def execute_app_launch(app_name):
-    import shutil
-    raw_clean = str(app_name).strip().strip(".,!?:;'\"")
-    clean_name = raw_clean.lower()
-    for prefix in ("open ", "launch ", "start ", "run ", "switch to "):
-        if clean_name.startswith(prefix):
-            clean_name = clean_name[len(prefix):].strip()
+def execute_universal_launch(query_target):
+    """
+    Alexa / Google Assistant-grade dynamic Windows application and URL resolver.
+    Dynamically queries Windows App Execution Aliases, Shell namespaces, and system PATH.
+    """
+    raw = str(query_target).strip()
+    clean = raw.lower()
 
-    for suffix in (" in pcb", " on pcb", " at pcb", " in pca", " on pca", " at pca", " in pc-b", " on pc-b", " at pc-b", " in pc-a", " on pc-a", " at pc-a"):
-        if clean_name.endswith(suffix):
-            clean_name = clean_name[:-len(suffix)].strip()
+    # 1. Strip common conversational prefixes and suffixes
+    for prefix in ["open ", "launch ", "start ", "run ", "switch to "]:
+        if clean.startswith(prefix):
+            clean = clean[len(prefix):].strip()
+            raw = raw[len(prefix):].strip()
 
-    clean_name = clean_name.strip(".,!?:;'\"")
+    for suffix in [" in pcb", " on pcb", " at pcb", " in pca", " on pca", " at pca", " in pc-b", " on pc-b", " at pc-b", " in pc-a", " on pc-a", " at pc-a"]:
+        if clean.endswith(suffix):
+            clean = clean[:-len(suffix)].strip()
+            raw = raw[:-len(suffix)].strip()
 
-    target_cmd = APP_REGISTRY.get(clean_name, None)
+    clean = clean.strip(".,!?:;'\"")
+    raw = raw.strip(".,!?:;'\"")
 
-    stripped_brand = clean_name
-    for brand_prefix in ("microsoft ", "google ", "ms "):
-        if stripped_brand.startswith(brand_prefix):
-            stripped_brand = stripped_brand[len(brand_prefix):].strip()
-            break
+    # 2. Web Domain & Explicit URL Handling
+    if clean.startswith("http://") or clean.startswith("https://"):
+        webbrowser.open(raw)
+        return True, f"Opened {raw} in default browser."
 
-    if not target_cmd:
-        target_cmd = APP_REGISTRY.get(stripped_brand, None)
+    if any(clean.endswith(tld) for tld in [".com", ".org", ".net", ".io", ".ai", ".in", ".edu", ".gov", ".app", ".dev"]):
+        webbrowser.open(f"https://{clean}")
+        return True, f"Opened {clean} in default browser."
 
-    display_name = clean_name.title() if len(clean_name) > 3 else clean_name.upper()
+    # 3. Direct Shell Association & System PATH Lookup
+    try:
+        os.startfile(raw)
+        return True, f"Opened {raw}."
+    except Exception:
+        pass
 
-    # 1. If it's a known URL or web app
-    if target_cmd and (target_cmd.startswith("http://") or target_cmd.startswith("https://")):
-        try:
-            webbrowser.open(target_cmd)
-            return True, f"Opened {display_name} in default browser."
-        except Exception as ex:
-            return False, f"Failed to open browser: {str(ex)}"
-
-    # 2. Registered target execution (binary, URI scheme, or shell command)
-    if target_cmd:
-        try:
-            os.startfile(target_cmd)
-            return True, f"Opened {display_name} on PC-B."
-        except Exception:
-            pass
-
-        try:
-            subprocess.Popen(target_cmd, shell=True)
-            return True, f"Opened {display_name} on PC-B."
-        except Exception:
-            pass
-
-    # 3. Dynamic search across candidates: check PATH and Windows App Paths / startfile
-    candidates = [clean_name, stripped_brand, f"{clean_name}.exe", f"{stripped_brand}.exe"]
-    for cand in candidates:
-        if not cand:
-            continue
-        bin_path = shutil.which(cand)
-        if bin_path:
+    # 4. Standard Windows Desktop Binary Normalization
+    aliased = APP_REGISTRY.get(clean) or APP_REGISTRY.get(clean.replace("microsoft ", "").replace("google ", "").replace("ms ", ""))
+    if aliased:
+        if aliased.startswith("http://") or aliased.startswith("https://"):
             try:
-                subprocess.Popen(f'"{bin_path}"', shell=True)
-                return True, f"Opened {display_name} on PC-B."
+                webbrowser.open(aliased)
+                return True, f"Opened {raw} in default browser."
+            except Exception:
+                pass
+        else:
+            try:
+                os.startfile(aliased)
+                return True, f"Opened {raw}."
+            except Exception:
+                pass
+            try:
+                subprocess.Popen(aliased, shell=True)
+                return True, f"Opened {raw}."
             except Exception:
                 pass
 
-        try:
-            os.startfile(cand)
-            return True, f"Opened {display_name} on PC-B."
-        except Exception:
-            pass
+    # 5. Dynamic Windows Start Menu & UWP AppsFolder Query via PowerShell
+    ps_query = f"""
+$target = '{clean}'
+$app = Get-StartApps | Where-Object {{ $_.Name -like "*$target*" }} | Select-Object -First 1
+if ($app) {{
+    Start-Process "shell:AppsFolder\\$($app.AppID)"
+    Write-Output "SUCCESS:$($app.Name)"
+}} else {{
+    Start-Process "$target" -ErrorAction SilentlyContinue
+    if ($?) {{ Write-Output "SUCCESS:$target" }} else {{ Write-Output "NOT_FOUND" }}
+}}
+"""
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_query],
+            capture_output=True, text=True, timeout=6
+        )
+        out = proc.stdout.strip()
+        if "SUCCESS:" in out:
+            matched_name = out.replace("SUCCESS:", "").strip()
+            return True, f"Opened {matched_name}."
+    except Exception as ex:
+        print(f"[UniversalLaunch] PowerShell query error: {ex}")
 
-    # 4. Check if it's a registered URI scheme or protocol association (e.g. spotify:, calc:)
-    if " " not in clean_name and not clean_name.endswith(":"):
-        try:
-            os.startfile(f"{clean_name}:")
-            return True, f"Opened {display_name} on PC-B."
-        except Exception:
-            pass
+    # 6. Fallback Search
+    search_url = f"https://www.google.com/search?q={urllib.parse.quote(raw)}"
+    webbrowser.open(search_url)
+    return True, f"Could not find local application {raw}. Searching online."
 
-    return False, f"Could not launch {app_name}: application or protocol not found."
+def execute_app_launch(app_name):
+    return execute_universal_launch(app_name)
 
 def resolve_desktop_app_command(app_name):
     if not app_name:
@@ -279,11 +297,63 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 "message": "PC-B host workstation daemon active"
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
+        elif self.path in ("/api/sse/verify", "/api/sse"):
+            sse_script = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse", "sse_standalone.py")
+            if not os.path.exists(sse_script):
+                sse_script = r"C:\Users\bhara\AIVA\packages\sse\sse_standalone.py"
+
+            if os.path.exists(sse_script):
+                res = subprocess.run([sys.executable, sse_script, "doctor"], capture_output=True, text=True)
+                passed = (res.returncode == 0)
+                self.send_response(200 if passed else 500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                resp = {
+                    "success": passed,
+                    "stdout": res.stdout,
+                    "stderr": res.stderr,
+                    "spokenResponse": "Strategic Systems Engine doctor suite passed all invariants." if passed else "SSE verification encountered invariant failures."
+                }
+                self.wfile.write(json.dumps(resp).encode("utf-8"))
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "spokenResponse": "SSE module not found in packages/sse."}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
+        if self.path in ("/api/sse/verify", "/api/sse"):
+            sse_script = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse", "sse_standalone.py")
+            if not os.path.exists(sse_script):
+                sse_script = r"C:\Users\bhara\AIVA\packages\sse\sse_standalone.py"
+
+            if os.path.exists(sse_script):
+                res = subprocess.run([sys.executable, sse_script, "doctor"], capture_output=True, text=True)
+                passed = (res.returncode == 0)
+                self.send_response(200 if passed else 500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                resp = {
+                    "success": passed,
+                    "stdout": res.stdout,
+                    "stderr": res.stderr,
+                    "spokenResponse": "Strategic Systems Engine doctor suite passed all invariants." if passed else "SSE verification encountered invariant failures."
+                }
+                self.wfile.write(json.dumps(resp).encode("utf-8"))
+            else:
+                self.send_response(404)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "spokenResponse": "SSE module not found in packages/sse."}).encode("utf-8"))
+            return
+
         if self.path == "/synthesize":
             t_start = time.time()
             content_length = int(self.headers.get("Content-Length", 0))
@@ -655,55 +725,57 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
             # 3. Route for desktop application launching (PC-A & PC-B)
             elif action in ("LAUNCH_APP", "LAUNCH", "OPEN_APP") or (action == "EXEC" and application):
-                app_target = resolve_desktop_app_command(application or command or query)
-                if "PC-A" in target or "PCA" in target or "194" in target:
-                    import socket
+                app_target = application or command or query or ""
+                target_node = (target or "").upper()
+                if "PC-A" in target_node or "PCA" in target_node or "194" in target_node:
                     pca_ip = "10.84.73.194"
-                    winrm_up = False
+                    escaped = app_target.replace("'", "''")
+                    ps_cmd = f"Start-Process '{escaped}'"
+                    winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {ps_cmd} }}"'
                     try:
-                        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        s.settimeout(2.5)
-                        s.connect((pca_ip, 5985))
-                        s.close()
-                        winrm_up = True
-                    except Exception:
-                        pass
-
-                    if winrm_up:
-                        try:
-                            import subprocess
-                            if "ollama" in (application or app_target or query).lower():
-                                subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) {{ Start-Process ollama -ArgumentList 'serve' }} }}\"", shell=True, timeout=5)
-                                time.sleep(1.0)
-                                ollama_check = False
-                                try:
-                                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                                    s.settimeout(2.5)
-                                    s.connect((pca_ip, 11434))
-                                    s.close()
-                                    ollama_check = True
-                                except Exception:
-                                    pass
-                                spoken = "Ollama GPU inference service is active on PC-A on port 11434." if ollama_check else "Dispatched Ollama serve command to PC-A via WinRM. GPU model serving is initializing."
-                                res_data = {"success": True, "node": "PC-A", "service": "ollama", "status": "ONLINE" if ollama_check else "BOOTING", "spokenResponse": spoken}
-                            else:
-                                subprocess.run(f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ Start-Process '{app_target}' }}\"", shell=True, timeout=5)
-                                spoken = f"Launching {application or app_target} on PC-A power workstation."
-                                res_data = {"success": True, "node": "PC-A", "application": app_target, "spokenResponse": spoken}
-                        except Exception as e:
-                            res_data = {"success": False, "node": "PC-A", "error": str(e), "spokenResponse": f"Dispatched launch to PC-A: {str(e)}"}
-                    else:
-                        spoken = f"PC-A compute workstation is currently sleeping on the local network. Cannot launch {application or app_target} until PC-A is awake."
-                        res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
+                        subprocess.Popen(winrm_cmd, shell=True)
+                        res_data = {
+                            "success": True,
+                            "node": "PC-A",
+                            "application": app_target,
+                            "spokenResponse": f"Dispatched {app_target} on PC-A."
+                        }
+                    except Exception as ex:
+                        res_data = {
+                            "success": False,
+                            "node": "PC-A",
+                            "spokenResponse": f"Failed launching {app_target} on PC-A: {str(ex)}"
+                        }
                 else:
-                    # Launch on PC-B
-                    target_app = application or app_target or command or query
-                    success, spoken = execute_app_launch(target_app)
+                    success, spoken = execute_universal_launch(app_target)
                     res_data = {
                         "success": success,
                         "node": "PC-B",
-                        "application": target_app,
+                        "application": app_target,
                         "spokenResponse": spoken
+                    }
+
+            # 4. Route for Strategic Systems Engine (SSE) Invariant Verification
+            elif action in ("SSE_VERIFY", "VERIFY_SSE", "SSE"):
+                sse_script = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse", "sse_standalone.py")
+                if not os.path.exists(sse_script):
+                    sse_script = r"C:\Users\bhara\AIVA\packages\sse\sse_standalone.py"
+
+                if os.path.exists(sse_script):
+                    res = subprocess.run([sys.executable, sse_script, "doctor"], capture_output=True, text=True)
+                    passed = (res.returncode == 0)
+                    res_data = {
+                        "success": passed,
+                        "node": "PC-B",
+                        "stdout": res.stdout,
+                        "stderr": res.stderr,
+                        "spokenResponse": "Strategic Systems Engine doctor suite passed all invariants." if passed else "SSE verification encountered invariant failures."
+                    }
+                else:
+                    res_data = {
+                        "success": False,
+                        "node": "PC-B",
+                        "spokenResponse": "SSE module not found in packages/sse."
                     }
             # Route for PC-A target
             elif "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():

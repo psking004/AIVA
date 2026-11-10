@@ -1,0 +1,15 @@
+{
+  "id": "prisoners-dilemma",
+  "name": "Prisoner's Dilemma",
+  "players": ["A", "B"],
+  "actions": {
+    "A": ["Cooperate", "Defect"],
+    "B": ["Cooperate", "Defect"]
+  },
+  "payoffs": [
+    [3, 3],
+    [0, 5],
+    [5, 0],
+    [1, 1]
+  ]
+}

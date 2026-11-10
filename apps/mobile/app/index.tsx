@@ -89,25 +89,22 @@ export default function MobileHomeScreen() {
     }
   }, []);
 
-  // Return to DORMANT after idle (4s default matching specification)
-  const scheduleDormancy = useCallback((delayMs: number = 4000, force: boolean = false) => {
-    if (!force) {
-      if (activeOverlayRef.current || textInputRef.current.trim().length > 0 || showTypingFallback) return;
-      if (voiceStateRef.current === 'LISTENING') return;
-    }
+  // Return to DORMANT after idle (2.5s default matching specification)
+  const scheduleDormancy = useCallback((delayMs: number = 2500) => {
     if (dormancyTimerRef.current) {
       clearTimeout(dormancyTimerRef.current);
       dormancyTimerRef.current = null;
     }
 
     dormancyTimerRef.current = setTimeout(() => {
-      if (voiceStateRef.current === 'LISTENING' || textInputRef.current.trim().length > 0) return;
-      console.log('[AIVA Mobile] Dormancy timer elapsed: transitioning presence to DORMANT');
+      if (voiceStateRef.current === 'LISTENING') return;
+      console.log('[AIVA State] Transitioning to DORMANT.');
       setPresenceState('DORMANT');
+      setVoiceState('DORMANT');
       setFaceState('IDLE');
       setLastResponseText(null);
     }, delayMs);
-  }, [showTypingFallback]);
+  }, []);
 
   // Screen Mount Sentinel
   useEffect(() => {
@@ -166,8 +163,9 @@ export default function MobileHomeScreen() {
       } finally {
         speakingEndTimeRef.current = Date.now();
         if (voiceStateRef.current !== 'LISTENING') {
+          setVoiceState('IDLE');
           setFaceState('IDLE');
-          scheduleDormancy(4000, true);
+          scheduleDormancy(2000);
         }
       }
     },
@@ -459,14 +457,14 @@ export default function MobileHomeScreen() {
         await speakResponse(ttsReply);
       } catch (err: any) {
         clearTimeout(watchdog);
-        console.warn('[AIVA Mobile] Voice processing error:', err);
-        const fallback = "I'm having temporary trouble reaching the intelligence servers. Please try again in a moment.";
+        console.error('[AIVA Voice] Command failure:', err);
+        const fallback = "An error occurred while executing that command.";
         setLastResponseText(fallback);
         await speakResponse(fallback);
       } finally {
         clearTimeout(watchdog);
         isProcessingRef.current = false;
-        scheduleDormancy(4000, true);
+        scheduleDormancy(3000);
       }
     },
     [clearTimers, speakResponse, scheduleDormancy]
@@ -533,12 +531,15 @@ export default function MobileHomeScreen() {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
-        scheduleDormancy(2500, true);
+        setVoiceState('IDLE');
+        scheduleDormancy(1500);
       } else if (state === 'ERROR') {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
+        console.log('[AIVA Voice] Speech recognition ended or errored:', event);
         setFaceState('IDLE');
-        scheduleDormancy(3000, true);
+        setVoiceState('IDLE');
+        scheduleDormancy(1500);
       } else if (state === 'DORMANT') {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
@@ -548,7 +549,7 @@ export default function MobileHomeScreen() {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
-        scheduleDormancy(4000, true);
+        scheduleDormancy(2000);
       }
 
       if (event?.type === 'RESULT' && event.text) {
@@ -623,7 +624,7 @@ export default function MobileHomeScreen() {
         }
         wakeAivaPresence(false);
       } else if (state === 'IDLE' && voiceStateRef.current === 'IDLE' && !textInputRef.current.trim().length && !showTypingFallback) {
-        scheduleDormancy(4000);
+        scheduleDormancy(2500);
       }
     });
 

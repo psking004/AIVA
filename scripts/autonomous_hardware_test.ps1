@@ -34,6 +34,23 @@ function Log-Failure($msg) {
 
 try {
     # -------------------------------------------------------------
+    # STAGE 0: Verifying Strategic Systems Engine (SSE) Sovereign Invariants
+    # -------------------------------------------------------------
+    Write-Host "`n[STAGE 0/5] Verifying Strategic Systems Engine (SSE) Sovereign Invariants..." -ForegroundColor Yellow
+    $ssePath = "packages\sse\sse_standalone.py"
+    if (Test-Path $ssePath) {
+        $sseResult = python $ssePath doctor
+        if ($LASTEXITCODE -eq 0) {
+            Log-Success "All SSE sovereign invariants verified green."
+        } else {
+            Log-Failure "SSE invariant checks failed.`n$sseResult"
+            exit 1
+        }
+    } else {
+        Write-Host "  [WARN] packages\sse\sse_standalone.py not found. Skipping Stage 0." -ForegroundColor Yellow
+    }
+
+    # -------------------------------------------------------------
     # STAGE 1: Tri-Node Fabric Ping & Daemon Health Check
     # -------------------------------------------------------------
     Log-Stage 1 "Tri-Node Fabric Ping & Daemon Health Check"

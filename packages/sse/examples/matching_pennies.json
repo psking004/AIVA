@@ -1,0 +1,15 @@
+{
+  "id": "matching-pennies",
+  "name": "Matching Pennies",
+  "players": ["Player 1", "Player 2"],
+  "actions": {
+    "Player 1": ["Heads", "Tails"],
+    "Player 2": ["Heads", "Tails"]
+  },
+  "payoffs": [
+    [1, -1],
+    [-1, 1],
+    [-1, 1],
+    [1, -1]
+  ]
+}

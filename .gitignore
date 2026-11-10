@@ -72,3 +72,5 @@ projects/
 android-aiva-log.txt
 mobile_tokens.json
 release/
+
+*.jsonl
