@@ -247,6 +247,46 @@ export default function MobileHomeScreen() {
           return;
         }
 
+        // Native Phone Calls (e.g. "call 9876543210", "dial 123456")
+        const callMatch = clean.match(/^(?:call|dial|phone)\s+([0-9\+\-\s]+)$/i);
+        if (callMatch) {
+          clearTimeout(watchdog);
+          const targetNumber = callMatch[1].trim();
+          await aivaVoiceService.makePhoneCall(targetNumber);
+          const spoken = `Calling ${targetNumber}.`;
+          setLastResponseText(spoken);
+          await speakResponse(spoken);
+          scheduleDormancy(2500);
+          return;
+        }
+
+        // Native SMS / Text Messages (e.g. "text 9876543210 saying I am on my way", "send sms to 123456 hello")
+        const smsMatch = clean.match(/^(?:text|message|sms|send\s+sms\s+to|send\s+text\s+to)\s+([0-9\+\-\s]+)\s*(?:saying|that|with|:)?\s*(.+)$/i);
+        if (smsMatch) {
+          clearTimeout(watchdog);
+          const targetNumber = smsMatch[1].trim();
+          const messageBody = smsMatch[2].trim();
+          await aivaVoiceService.sendSms(targetNumber, messageBody);
+          const spoken = `Sending message to ${targetNumber}.`;
+          setLastResponseText(spoken);
+          await speakResponse(spoken);
+          scheduleDormancy(2500);
+          return;
+        }
+
+        // Native Calendar Event Insertion (e.g. "schedule event team sync", "create calendar event meeting tomorrow")
+        const calMatch = clean.match(/^(?:create\s+calendar|schedule\s+calendar|add\s+to\s+calendar|create\s+event|schedule\s+event)\s+(?:for\s+|called\s+|titled\s+)?(.+)$/i);
+        if (calMatch) {
+          clearTimeout(watchdog);
+          const eventTitle = calMatch[1].trim();
+          await aivaVoiceService.createCalendarEvent(eventTitle);
+          const spoken = `Scheduling calendar event for ${eventTitle}.`;
+          setLastResponseText(spoken);
+          await speakResponse(spoken);
+          scheduleDormancy(2500);
+          return;
+        }
+
         // 1. App Launch Intent Check (Non-greedy app name & compound intent support)
         const launchCmd = parseLaunchIntent(clean);
         if (launchCmd.isAppLaunch) {

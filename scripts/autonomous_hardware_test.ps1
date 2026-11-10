@@ -18,7 +18,7 @@ Write-Host "  AIVA AUTONOMOUS TRI-NODE HARDWARE VERIFICATION HARNESS   " -Foregr
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $PassedStages = 0
-$TotalStages = 6
+$TotalStages = 7
 
 function Log-Stage($stageNum, $title) {
     Write-Host "`n[STAGE $stageNum/$TotalStages] $title" -ForegroundColor Yellow
@@ -458,6 +458,82 @@ try {
 
     $PassedStages++
     Log-Success "Stage 6 Complete: Workstation App Lifecycle & SSE Strategic Routing verified.`n"
+
+    # -------------------------------------------------------------
+    # STAGE 7: Autonomous Desktop Tool Suite & Multi-Step SSE ReAct Decomposition
+    # -------------------------------------------------------------
+    Log-Stage 7 "Autonomous Desktop Tool Suite (MODIFY_FILE/READ_FILE/EXECUTE_SHELL) & Multi-Step ReAct Plan"
+
+    # 7.1 Test MODIFY_FILE (Block Diff Patching)
+    Write-Host "  Testing surgical block patch via MODIFY_FILE..."
+    $testFilePath = "C:\AIVA_Workspace\test_patch.py"
+    Set-Content -Path $testFilePath -Value "def compute():`n    return 'OLD_BLOCK'`n`nprint(compute())`n" -Encoding UTF8
+
+    $patchPayload = @{
+        action = "MODIFY_FILE"
+        targetNode = "PC-B"
+        filename = "test_patch.py"
+        target_block = "return 'OLD_BLOCK'"
+        replacement_block = "return 'PATCHED_BLOCK_SUCCESS'"
+    } | ConvertTo-Json
+    $patchResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $patchPayload -TimeoutSec 10
+    Write-Host "  Patch Response: $($patchResp | ConvertTo-Json -Compress)"
+    if (-not $patchResp.success) {
+        throw "MODIFY_FILE block replacement failed!"
+    }
+    $patchedContent = Get-Content -Path $testFilePath -Raw
+    if ($patchedContent -notmatch "PATCHED_BLOCK_SUCCESS") {
+        throw "File content did not contain patched block!"
+    }
+    Log-Success "MODIFY_FILE successfully applied surgical diff block replacement."
+
+    # 7.2 Test READ_FILE (Line Range Extraction)
+    Write-Host "  Testing line-range inspection via READ_FILE..."
+    $readPayload = @{
+        action = "READ_FILE"
+        targetNode = "PC-B"
+        filename = "test_patch.py"
+        start_line = 1
+        end_line = 3
+    } | ConvertTo-Json
+    $readResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $readPayload -TimeoutSec 10
+    Write-Host "  Read Response: $($readResp | ConvertTo-Json -Compress)"
+    if (-not $readResp.success -or $readResp.content -notmatch "PATCHED_BLOCK_SUCCESS") {
+        throw "READ_FILE failed to retrieve line range!"
+    }
+    Log-Success "READ_FILE retrieved lines 1-3 with context budgeting."
+
+    # 7.3 Test EXECUTE_SHELL (Arbitrary Shell Execution)
+    Write-Host "  Testing arbitrary workspace shell execution via EXECUTE_SHELL..."
+    $shellPayload = @{
+        action = "EXECUTE_SHELL"
+        targetNode = "PC-B"
+        command = "python C:\AIVA_Workspace\test_patch.py"
+    } | ConvertTo-Json
+    $shellResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $shellPayload -TimeoutSec 15
+    Write-Host "  Shell Response: $($shellResp | ConvertTo-Json -Compress)"
+    if (-not $shellResp.success -or $shellResp.stdout -notmatch "PATCHED_BLOCK_SUCCESS") {
+        throw "EXECUTE_SHELL execution failed or unexpected output!"
+    }
+    Log-Success "EXECUTE_SHELL executed workspace script with exit code 0."
+
+    # 7.4 Test Multi-Step SSE ReAct Intent Decomposition
+    Write-Host "  Testing Multi-Step SSE Plan Decomposition via /api/agent/plan..."
+    $multiQuery = "Install git on PCB, create a python script that tests network latency, and schedule a reminder on my phone"
+    $planUrl = "http://10.84.73.59:5050/api/agent/plan?query=" + [System.Uri]::EscapeDataString($multiQuery)
+    $multiPlanResp = Invoke-RestMethod -Uri $planUrl -Method Get -TimeoutSec 15
+    Write-Host "  Decomposed Strategy: $($multiPlanResp.strategy)"
+    Write-Host "  Decomposed Steps:    $($multiPlanResp.steps.Count) steps generated."
+    if ($multiPlanResp.strategy -ne "DECOMPOSED_MULTI_NODE" -or $multiPlanResp.steps.Count -lt 3) {
+        throw "Multi-step plan decomposition failed to produce DECOMPOSED_MULTI_NODE plan!"
+    }
+    foreach ($step in $multiPlanResp.steps) {
+        Write-Host "    -> Node: $($step.node), Action: $($step.action)" -ForegroundColor Cyan
+    }
+    Log-Success "Multi-Step SSE Intent Decomposition formulated verified DAG across fabric nodes."
+
+    $PassedStages++
+    Log-Success "Stage 7 Complete: Autonomous Desktop Tool Suite & Multi-Step ReAct Plan verified.`n"
 
     # -------------------------------------------------------------
     # SUMMARY

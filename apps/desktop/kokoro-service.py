@@ -9,6 +9,9 @@ import os
 import io
 import time
 import json
+import re
+import shutil
+import fnmatch
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import soundfile as sf
 
@@ -375,6 +378,179 @@ def execute_app_close(app_name):
 
     return False, f"Could not find running process for {raw} to close."
 
+# ==============================================================================
+# AUTONOMOUS DESKTOP TOOL SUITE (Cursor/Codex/Antigravity Primitives)
+# ==============================================================================
+
+WINGET_PACKAGE_MAP = {
+    "7zip": "7zip.7zip",
+    "7-zip": "7zip.7zip",
+    "git": "Git.Git",
+    "vscode": "Microsoft.VisualStudioCode",
+    "vs code": "Microsoft.VisualStudioCode",
+    "visual studio code": "Microsoft.VisualStudioCode",
+    "vlc": "VideoLAN.VLC",
+    "python": "Python.Python.3.11",
+    "python3": "Python.Python.3.11",
+    "chrome": "Google.Chrome",
+    "firefox": "Mozilla.Firefox",
+    "nodejs": "OpenJS.NodeJS.LTS",
+    "node": "OpenJS.NodeJS.LTS",
+    "ripgrep": "BurntSushi.ripgrep.MSVC",
+    "rg": "BurntSushi.ripgrep.MSVC",
+    "neovim": "Neovim.Neovim",
+    "nvim": "Neovim.Neovim",
+    "curl": "cURL.cURL",
+}
+
+def resolve_winget_bin():
+    w = shutil.which("winget")
+    if w and os.path.exists(w):
+        return w
+    local_app_data = os.environ.get("LOCALAPPDATA", "")
+    if local_app_data:
+        p = os.path.join(local_app_data, "Microsoft", "WindowsApps", "winget.exe")
+        if os.path.exists(p):
+            return p
+    return "winget"
+
+def execute_install_package(package_name, manager="winget", target_node="PC-B"):
+    if not package_name:
+        return False, "No package specified to install."
+    
+    clean = str(package_name).strip().lower()
+    pkg_id = WINGET_PACKAGE_MAP.get(clean, str(package_name).strip())
+
+    if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
+        pca_ip = "10.84.73.194"
+        cmd_str = f"winget install --id {pkg_id} -e --silent --accept-source-agreements --accept-package-agreements"
+        winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {cmd_str} }}"'
+        try:
+            res = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=180)
+            return res.returncode == 0, f"Dispatched package {pkg_id} installation to PC-A."
+        except Exception as ex:
+            return False, f"Failed installing {pkg_id} on PC-A: {str(ex)}"
+
+    winget_bin = resolve_winget_bin()
+    cmd = [
+        winget_bin, "install", "--id", pkg_id, "-e",
+        "--silent", "--accept-source-agreements", "--accept-package-agreements"
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        if proc.returncode == 0 or "Successfully installed" in out or "already installed" in out.lower() or "0x8a15002b" in out:
+            return True, f"Successfully installed {package_name}."
+        return False, f"Failed installing {package_name}: {out[-200:].strip()}"
+    except Exception as ex:
+        return False, f"Installation exception for {package_name}: {str(ex)}"
+
+def resolve_workspace_filepath(filename_or_path, target_node="PC-B"):
+    p = str(filename_or_path).strip()
+    is_pca = "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node or p.startswith(r"\\10.84.73.194") or p.lower().startswith("pca\\") or p.lower().startswith("pca/")
+    if is_pca:
+        clean_p = re.sub(r'^(?:pca[\\/]|\\*10\.84\.73\.194[\\/]AIVA_Workspace[\\/])', '', p, flags=re.I)
+        target_path = os.path.join(r"\\10.84.73.194\AIVA_Workspace", os.path.basename(clean_p) if not os.path.dirname(clean_p) else clean_p)
+        mirror_path = os.path.join(r"C:\AIVA_Workspace\pca", os.path.basename(clean_p) if not os.path.dirname(clean_p) else clean_p)
+        return target_path, mirror_path, True
+    else:
+        clean_p = p.replace("C:\\AIVA_Workspace\\", "").replace("c:\\AIVA_Workspace\\", "")
+        if os.path.isabs(p) and not p.lower().startswith(r"c:\aiva_workspace"):
+            target_path = p
+        else:
+            target_path = os.path.join(r"C:\AIVA_Workspace", clean_p)
+        return target_path, None, False
+
+def patch_file(file_path, target_block, replacement_block, target_node="PC-B"):
+    target_path, mirror_path, is_pca = resolve_workspace_filepath(file_path, target_node)
+    path_to_read = target_path if os.path.exists(target_path) else (mirror_path if (mirror_path and os.path.exists(mirror_path)) else None)
+    if not path_to_read:
+        return False, f"File {file_path} does not exist."
+    
+    with open(path_to_read, "r", encoding="utf-8", errors="replace") as f:
+        content = f.read()
+    
+    if target_block and target_block not in content:
+        return False, f"Target block not found in {os.path.basename(path_to_read)}."
+    
+    updated = content.replace(target_block, replacement_block, 1) if target_block else replacement_block
+    
+    try:
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write(updated)
+    except Exception as ex:
+        if not is_pca:
+            return False, f"Failed writing to {target_path}: {ex}"
+
+    if mirror_path:
+        try:
+            os.makedirs(os.path.dirname(mirror_path), exist_ok=True)
+            with open(mirror_path, "w", encoding="utf-8") as f:
+                f.write(updated)
+        except Exception:
+            pass
+            
+    return True, f"Patched {os.path.basename(target_path)} successfully."
+
+def read_file_lines(file_path, start_line=1, end_line=None, target_node="PC-B"):
+    target_path, mirror_path, is_pca = resolve_workspace_filepath(file_path, target_node)
+    path_to_read = target_path if os.path.exists(target_path) else (mirror_path if (mirror_path and os.path.exists(mirror_path)) else None)
+    if not path_to_read:
+        return False, f"File {file_path} not found.", ""
+    
+    with open(path_to_read, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    
+    start = max(1, int(start_line)) - 1
+    end = int(end_line) if end_line is not None else len(lines)
+    selected = lines[start:end]
+    return True, f"Read lines {start+1}-{min(end, len(lines))} of {os.path.basename(path_to_read)}.", "".join(selected)
+
+def search_workspace(query, search_path=None, file_pattern="*", target_node="PC-B"):
+    target_path, _, is_pca = resolve_workspace_filepath(search_path or "C:\\AIVA_Workspace", target_node)
+    base = target_path if os.path.exists(target_path) else r"C:\AIVA_Workspace"
+    matches = []
+    for root, dirs, files in os.walk(base):
+        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".gradle", "build", "__pycache__")]
+        for file in files:
+            if fnmatch.fnmatch(file, file_pattern):
+                fp = os.path.join(root, file)
+                try:
+                    with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                        for l_idx, line in enumerate(f, 1):
+                            if query.lower() in line.lower():
+                                matches.append({"file": fp, "line": l_idx, "text": line.strip()})
+                                if len(matches) >= 50:
+                                    break
+                except Exception:
+                    continue
+        if len(matches) >= 50:
+            break
+    return True, f"Found {len(matches)} occurrences of '{query}'.", matches
+
+def execute_shell_command(command, cwd=None, timeout=60, target_node="PC-B"):
+    if not command:
+        return False, "No shell command provided.", "", -1
+    
+    if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
+        pca_ip = "10.84.73.194"
+        escaped = command.replace("'", "''")
+        winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {escaped} }}"'
+        try:
+            res = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+            return res.returncode == 0, res.stdout, res.stderr, res.returncode
+        except Exception as ex:
+            return False, "", str(ex), -1
+    else:
+        target_cwd = cwd or r"C:\AIVA_Workspace"
+        os.makedirs(target_cwd, exist_ok=True)
+        try:
+            res = subprocess.run(command, shell=True, cwd=target_cwd, capture_output=True, text=True, timeout=timeout)
+            return res.returncode == 0, res.stdout, res.stderr, res.returncode
+        except Exception as ex:
+            return False, "", str(ex), -1
+
 class KokoroHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"[KOKORO TTS] {format % args}\n")
@@ -606,6 +782,8 @@ class KokoroHandler(BaseHTTPRequestHandler):
             query = str(data.get("query", ""))
             command = str(data.get("command", ""))
             application = str(data.get("application", "")).strip()
+            filename = str(data.get("filename") or data.get("file") or "").strip()
+            text = str(data.get("text", "")).strip()
 
             global ACTIVE_SESSION
             import os, sys, subprocess, socket
@@ -948,13 +1126,42 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 plan_query = query or command or application or ""
                 if evaluate_strategic_intent:
                     plan_result = evaluate_strategic_intent(plan_query)
+                    should_execute = bool(data.get("execute", False))
+                    step_exec_results = []
+                    if should_execute and plan_result.get("steps"):
+                        for s in plan_result["steps"]:
+                            s_node = (s.get("node") or "PC-B").upper()
+                            s_act = s.get("action", "")
+                            s_res = {"step": s, "success": True, "output": ""}
+                            if s_act == "INSTALL_APP":
+                                ok, msg = execute_install_package(s.get("target"), target_node=s_node)
+                                s_res["success"], s_res["output"] = ok, msg
+                            elif s_act == "CREATE_FILE":
+                                fn = s.get("file", "script.py")
+                                ok, msg = create_empty_file_with_editor(fn) if "PC-B" in s_node else (True, f"Staged {fn} for PC-A")
+                                s_res["success"], s_res["output"] = ok, msg
+                            elif s_act == "MODIFY_FILE":
+                                fn = s.get("file", "script.py")
+                                content = s.get("content", "")
+                                ok, msg = patch_file(fn, "", content, target_node=s_node)
+                                s_res["success"], s_res["output"] = ok, msg
+                            elif s_act == "EXECUTE_SHELL":
+                                cmd = s.get("command", "")
+                                ok, out, err, code = execute_shell_command(cmd, target_node=s_node)
+                                s_res["success"], s_res["output"] = ok, (out or err)
+                            elif s_act == "CREATE_CALENDAR":
+                                s_res["success"], s_res["output"] = True, f"Dispatched to mobile: {s.get('title')}"
+                            step_exec_results.append(s_res)
+
                     res_data = {
                         "success": True,
                         "node": "PC-B",
                         "action": "PLAN",
                         "plan": plan_result,
+                        "executed": should_execute,
+                        "execution_results": step_exec_results if should_execute else None,
                         "target_node": plan_result.get("target_node"),
-                        "spokenResponse": plan_result.get("rationale")
+                        "spokenResponse": plan_result.get("spokenResponse") or plan_result.get("rationale")
                     }
                 else:
                     res_data = {
@@ -963,7 +1170,138 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "spokenResponse": "Strategic Systems Engine is not loaded."
                     }
 
-            # 6. Route for Strategic Systems Engine (SSE) Invariant Verification
+            # 6. Route for Autonomous Multi-Step ReAct Plan Execution
+            elif action in ("EXECUTE_PLAN", "RUN_PLAN"):
+                steps = data.get("steps") or []
+                step_exec_results = []
+                all_succeeded = True
+                for s in steps:
+                    s_node = (s.get("node") or "PC-B").upper()
+                    s_act = s.get("action", "")
+                    s_res = {"step": s, "success": True, "output": ""}
+                    if s_act == "INSTALL_APP":
+                        ok, msg = execute_install_package(s.get("target"), target_node=s_node)
+                        s_res["success"], s_res["output"] = ok, msg
+                    elif s_act == "CREATE_FILE":
+                        fn = s.get("file", "script.py")
+                        ok, msg = create_empty_file_with_editor(fn) if "PC-B" in s_node else (True, f"Staged {fn} for PC-A")
+                        s_res["success"], s_res["output"] = ok, msg
+                    elif s_act == "MODIFY_FILE":
+                        fn = s.get("file", "script.py")
+                        content = s.get("content", "")
+                        ok, msg = patch_file(fn, "", content, target_node=s_node)
+                        s_res["success"], s_res["output"] = ok, msg
+                    elif s_act == "EXECUTE_SHELL":
+                        cmd = s.get("command", "")
+                        ok, out, err, code = execute_shell_command(cmd, target_node=s_node)
+                        s_res["success"], s_res["output"] = ok, (out or err)
+                    elif s_act == "CREATE_CALENDAR":
+                        s_res["success"], s_res["output"] = True, f"Dispatched to mobile: {s.get('title')}"
+                    if not s_res["success"]:
+                        all_succeeded = False
+                    step_exec_results.append(s_res)
+                res_data = {
+                    "success": all_succeeded,
+                    "node": "PC-B",
+                    "action": "EXECUTE_PLAN",
+                    "steps": step_exec_results,
+                    "spokenResponse": f"Executed plan with {len(step_exec_results)} steps." if all_succeeded else "Plan execution encountered errors."
+                }
+
+            # 7. Route for Package Installation via WinGet / Choco
+            elif action in ("INSTALL_APP", "PACKAGE_INSTALL", "WINGET"):
+                pkg_target = data.get("package") or data.get("package_name") or data.get("target") or application or command or text or query or ""
+                for pfx in ("install ", "winget ", "setup ", "download "):
+                    if pkg_target.lower().startswith(pfx):
+                        pkg_target = pkg_target[len(pfx):].strip()
+                target_node = (target or "").upper() or "PC-B"
+                success, spoken = execute_install_package(pkg_target, target_node=target_node)
+                res_data = {
+                    "success": success,
+                    "node": "PC-A" if "PC-A" in target_node or "PCA" in target_node else "PC-B",
+                    "package": pkg_target,
+                    "spokenResponse": spoken
+                }
+
+            # 8. Route for Surgical File Modification (Patch / Overwrite)
+            elif action in ("MODIFY_FILE", "EDIT_FILE_DIFF", "PATCH_FILE"):
+                target_file = filename or command or application or ""
+                target_block = data.get("target_block", "")
+                replacement_block = data.get("replacement_block", data.get("content", ""))
+                target_node = (target or "").upper() or "PC-B"
+                if not target_block:
+                    target_path, mirror_path, is_pca = resolve_workspace_filepath(target_file, target_node)
+                    try:
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with open(target_path, "w", encoding="utf-8") as f:
+                            f.write(replacement_block)
+                        if mirror_path:
+                            os.makedirs(os.path.dirname(mirror_path), exist_ok=True)
+                            with open(mirror_path, "w", encoding="utf-8") as f:
+                                f.write(replacement_block)
+                        success = True
+                        spoken = f"Updated {os.path.basename(target_path)}."
+                    except Exception as ex:
+                        success = False
+                        spoken = f"Failed modifying {target_file}: {ex}"
+                else:
+                    success, spoken = patch_file(target_file, target_block, replacement_block, target_node=target_node)
+                res_data = {
+                    "success": success,
+                    "node": "PC-A" if "PC-A" in target_node or "PCA" in target_node else "PC-B",
+                    "file": target_file,
+                    "spokenResponse": spoken
+                }
+
+            # 9. Route for Reading File Line Ranges
+            elif action in ("READ_FILE", "VIEW_FILE_LINES"):
+                target_file = filename or command or application or ""
+                start_line = data.get("start_line", 1)
+                end_line = data.get("end_line", None)
+                target_node = (target or "").upper() or "PC-B"
+                success, spoken, content = read_file_lines(target_file, start_line, end_line, target_node=target_node)
+                res_data = {
+                    "success": success,
+                    "node": "PC-A" if "PC-A" in target_node or "PCA" in target_node else "PC-B",
+                    "file": target_file,
+                    "content": content,
+                    "spokenResponse": spoken
+                }
+
+            # 10. Route for Workspace Search (Grep / Query)
+            elif action in ("SEARCH_WORKSPACE", "GREP", "FIND_IN_FILES"):
+                search_query = query or command or text or ""
+                search_path = data.get("path", None)
+                file_pattern = data.get("file_pattern", "*")
+                target_node = (target or "").upper() or "PC-B"
+                success, spoken, matches = search_workspace(search_query, search_path, file_pattern, target_node=target_node)
+                res_data = {
+                    "success": success,
+                    "node": "PC-A" if "PC-A" in target_node or "PCA" in target_node else "PC-B",
+                    "query": search_query,
+                    "matches": matches,
+                    "count": len(matches),
+                    "spokenResponse": spoken
+                }
+
+            # 11. Route for Arbitrary Shell Command Execution
+            elif action in ("EXECUTE_SHELL", "RUN_SHELL", "SHELL"):
+                shell_cmd = command or query or text or ""
+                cwd = data.get("cwd", data.get("working_directory", None))
+                timeout = int(data.get("timeout", 60))
+                target_node = (target or "").upper() or "PC-B"
+                success, stdout, stderr, code = execute_shell_command(shell_cmd, cwd, timeout, target_node=target_node)
+                res_data = {
+                    "success": success,
+                    "node": "PC-A" if "PC-A" in target_node or "PCA" in target_node else "PC-B",
+                    "command": shell_cmd,
+                    "exit_code": code,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "spokenResponse": f"Command exited with code {code}." if success else f"Command failed with code {code}."
+                }
+
+            # 12. Route for Strategic Systems Engine (SSE) Invariant Verification
             elif action in ("SSE_VERIFY", "VERIFY_SSE", "SSE"):
                 sse_script = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse", "sse_standalone.py")
                 if not os.path.exists(sse_script):

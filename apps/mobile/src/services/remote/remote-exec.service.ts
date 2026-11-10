@@ -11,12 +11,12 @@ import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
 
 export type NodeTarget = 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CLOSE_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION' | 'PLAN';
+export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CLOSE_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION' | 'PLAN' | 'INSTALL_APP' | 'MODIFY_FILE' | 'READ_FILE' | 'SEARCH_WORKSPACE' | 'EXECUTE_SHELL' | 'EXECUTE_PLAN';
 
 export interface RemoteExecIntent {
   isRemoteExec: boolean;
   targetNode: 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-  action: 'STATUS' | 'LAUNCH_APP' | 'CLOSE_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION' | 'PLAN';
+  action: 'STATUS' | 'LAUNCH_APP' | 'CLOSE_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION' | 'PLAN' | 'INSTALL_APP' | 'MODIFY_FILE' | 'READ_FILE' | 'SEARCH_WORKSPACE' | 'EXECUTE_SHELL' | 'EXECUTE_PLAN';
   application?: string;
   command?: string;
   text?: string;
@@ -294,7 +294,21 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 6. APP LAUNCHING ON WORKSTATIONS
+  // 6. PACKAGE INSTALLATION (WINGET / CHOCO)
+  const installMatch = strippedQuery.match(/^(?:install|setup|winget|choco)\s+(?:package\s+|app\s+|software\s+)?([a-z0-9_\-\.]+)$/i);
+  if (installMatch) {
+    const pkg = installMatch[1].trim();
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'INSTALL_APP',
+      application: pkg,
+      command: pkg,
+      query: clean,
+    };
+  }
+
+  // 7. APP LAUNCHING ON WORKSTATIONS
   const launchMatch = strippedQuery.match(/^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+)$/i);
   if (launchMatch && targetNode !== 'MOBILE') {
     return {

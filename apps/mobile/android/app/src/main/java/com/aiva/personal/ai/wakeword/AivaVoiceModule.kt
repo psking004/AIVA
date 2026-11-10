@@ -11,11 +11,13 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.CalendarContract
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.Arguments
@@ -660,6 +662,84 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             }
         } catch (e: Exception) {
             promise.reject("CREATE_NOTE_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun makePhoneCall(phoneNumber: String, promise: Promise) {
+        try {
+            val cleanNumber = phoneNumber.trim().replace(" ", "").replace("-", "")
+            val hasCallPermission = ContextCompat.checkSelfPermission(
+                reactContext,
+                android.Manifest.permission.CALL_PHONE
+            ) == PackageManager.PERMISSION_GRANTED
+
+            val intentAction = if (hasCallPermission) Intent.ACTION_CALL else Intent.ACTION_DIAL
+            val callIntent = Intent(intentAction, Uri.parse("tel:$cleanNumber")).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactContext.startActivity(callIntent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "makePhoneCall error: ${e.message}")
+            promise.reject("CALL_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun sendSms(phoneNumber: String, messageText: String, promise: Promise) {
+        try {
+            val cleanNumber = phoneNumber.trim().replace(" ", "").replace("-", "")
+            val hasSmsPermission = ContextCompat.checkSelfPermission(
+                reactContext,
+                android.Manifest.permission.SEND_SMS
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (hasSmsPermission) {
+                val smsManager = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    reactContext.getSystemService(SmsManager::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    SmsManager.getDefault()
+                }
+                smsManager.sendTextMessage(cleanNumber, null, messageText, null, null)
+                promise.resolve(true)
+            } else {
+                val smsIntent = Intent(Intent.ACTION_SENDTO).apply {
+                    data = Uri.parse("smsto:$cleanNumber")
+                    putExtra("sms_body", messageText)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                reactContext.startActivity(smsIntent)
+                promise.resolve(true)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "sendSms error: ${e.message}")
+            promise.reject("SMS_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun createCalendarEvent(title: String, description: String?, startTimeMillis: Double, endTimeMillis: Double, promise: Promise) {
+        try {
+            val start = if (startTimeMillis > 0) startTimeMillis.toLong() else System.currentTimeMillis()
+            val end = if (endTimeMillis > 0) endTimeMillis.toLong() else (start + 60 * 60 * 1000L)
+
+            val calIntent = Intent(Intent.ACTION_INSERT).apply {
+                data = CalendarContract.Events.CONTENT_URI
+                putExtra(CalendarContract.Events.TITLE, title)
+                if (!description.isNullOrEmpty()) {
+                    putExtra(CalendarContract.Events.DESCRIPTION, description)
+                }
+                putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, start)
+                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactContext.startActivity(calIntent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "createCalendarEvent error: ${e.message}")
+            promise.reject("CALENDAR_FAILED", e.message)
         }
     }
 

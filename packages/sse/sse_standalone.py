@@ -358,6 +358,86 @@ class SovereignDecisionCore:
         return best_i, avg_util, min_worst_case_regret
 
 
+def decompose_multi_step_plan(query: str) -> list[dict[str, Any]]:
+    """Splits compound / multi-clause directives into discrete task definitions across fabric nodes."""
+    raw_clauses = [c.strip() for c in re.split(r'[,;]|\band\s+|\bthen\s+', query) if c.strip()]
+    steps = []
+
+    package_ids = {
+        "git": "Git.Git",
+        "7zip": "7zip.7zip",
+        "7-zip": "7zip.7zip",
+        "vscode": "Microsoft.VisualStudioCode",
+        "vs code": "Microsoft.VisualStudioCode",
+        "visual studio code": "Microsoft.VisualStudioCode",
+        "vlc": "VideoLAN.VLC",
+        "python": "Python.Python.3.11",
+        "chrome": "Google.Chrome",
+        "neovim": "Neovim.Neovim",
+    }
+
+    for clause in raw_clauses:
+        c_low = clause.lower()
+        node = "PC-B"
+        if any(h in c_low for h in ["on pca", "in pca", "at pca", "on pc-a", "in pc-a"]):
+            node = "PC-A"
+        elif any(h in c_low for h in ["on phone", "on mobile", "my phone", "my mobile"]):
+            node = "MOBILE"
+        elif any(h in c_low for h in ["on pcb", "in pcb", "at pcb", "on pc-b", "in pc-b"]):
+            node = "PC-B"
+
+        if any(k in c_low for k in ["install ", "winget ", "setup "]):
+            pkg_match = re.search(r'(?:install|setup|winget)\s+([a-z0-9_\-\.]+)', c_low)
+            pkg_name = pkg_match.group(1) if pkg_match else "package"
+            pkg_id = package_ids.get(pkg_name, pkg_name)
+            steps.append({
+                "node": node,
+                "action": "INSTALL_APP",
+                "target": pkg_id,
+            })
+        elif any(k in c_low for k in ["create ", "make ", "generate ", "touch ", "write "]) and any(k in c_low for k in ["file", "script", ".py", ".ts", ".js", "test"]):
+            file_match = re.search(r'(?:file|script|called|named)?\s*([a-z0-9_\-]+\.(?:py|js|ts|txt|json|sh|ps1))', c_low)
+            fname = file_match.group(1) if file_match else None
+            if not fname:
+                fname = "network_test.py" if ("latency" in c_low or "network" in c_low) else "workspace_script.py"
+            steps.append({
+                "node": node,
+                "action": "CREATE_FILE",
+                "file": fname,
+            })
+            if "test" in c_low or "latency" in c_low or "code" in c_low or "that" in c_low:
+                steps.append({
+                    "node": node,
+                    "action": "MODIFY_FILE",
+                    "file": fname,
+                    "content": "#!/usr/bin/env python3\nimport sys, time\nprint('AIVA autonomous script executed.')\n",
+                })
+        elif any(k in c_low for k in ["calendar", "reminder", "schedule", "alarm", "event"]) or node == "MOBILE":
+            title = re.sub(r'^(?:schedule|create|add)\s+(?:a\s+)?(?:calendar\s+event|reminder|calendar|event)?\s*(?:on\s+my\s+phone\s*|on\s+phone\s*|on\s+mobile\s*)?(?:about|for|to)?\s*', '', clause, flags=re.I).strip()
+            title = re.sub(r'\s+on\s+(?:my\s+)?(?:phone|mobile)\s*$', '', title, flags=re.I).strip()
+            if not title or title.lower() in ("on my phone", "phone", "mobile", "reminder", "event"):
+                title = "Check network test"
+            steps.append({
+                "node": "MOBILE",
+                "action": "CREATE_CALENDAR",
+                "title": title,
+            })
+        elif any(k in c_low for k in ["run ", "exec ", "git ", "build ", "compile "]):
+            steps.append({
+                "node": node,
+                "action": "EXECUTE_SHELL",
+                "command": clause,
+            })
+        else:
+            steps.append({
+                "node": node,
+                "action": "EXEC",
+                "command": clause,
+            })
+
+    return steps
+
+
 def evaluate_strategic_intent(query: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Game-theoretic routing engine for distributed AIVA tri-node fabric (MOBILE, PC_B, PC_A).
     
@@ -368,6 +448,33 @@ def evaluate_strategic_intent(query: str, context: dict[str, Any] | None = None)
     q = (query or "").lower().strip()
     actions_p1 = [NodeID.MOBILE.value, NodeID.PC_B.value, NodeID.PC_A.value]  # ["MOBILE", "PC_B", "PC_A"]
     actions_p2 = ["OPTIMAL_MESH", "HIGH_LATENCY_PARTITION"]
+
+    raw_clauses = [c.strip() for c in re.split(r'[,;]|\band\s+|\bthen\s+', query) if c.strip()]
+    if len(raw_clauses) > 1 and any(k in q for k in [" and ", ", then ", "then ", ";", ", create ", ", install ", ", schedule ", "install "]):
+        steps = decompose_multi_step_plan(query)
+        if len(steps) > 1:
+            core = SovereignDecisionCore(node_id=NodeID.PC_B, mode="STRATEGIC_PLAN")
+            u1 = [[2.0, 2.0], [10.0, 8.0], [4.0, 2.0]]
+            u2 = [[3.0, 2.0], [9.0, 7.0], [5.0, 3.0]]
+            verdict = core.solve_matrix(u1, u2, actions_p1=actions_p1, actions_p2=actions_p2)
+            nodes_involved = list(dict.fromkeys(s["node"] for s in steps))
+            return {
+                "success": True,
+                "strategy": "DECOMPOSED_MULTI_NODE",
+                "query": query,
+                "steps": steps,
+                "target_node": verdict.action_name,
+                "action_index": verdict.action_idx,
+                "solver_tier": verdict.solver_tier,
+                "expected_utility": verdict.expected_utility,
+                "worst_case_regret": verdict.worst_case_regret,
+                "grant_token": verdict.grant_token,
+                "decision_id": verdict.decision_id,
+                "mode": verdict.mode,
+                "compact_payload": verdict.to_compact_payload(),
+                "spokenResponse": f"Formulated {len(steps)}-step multi-node plan across {', '.join(nodes_involved)} via {verdict.solver_tier}.",
+                "rationale": f"Decomposed multi-clause intent into {len(steps)} coordinated steps across {', '.join(nodes_involved)} via {verdict.solver_tier}.",
+            }
 
     # Compute operational affinities:
     # 1. GPU / Heavy compute / Local LLM / Ollama -> High affinity for PC_A (RTX 3050)

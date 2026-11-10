@@ -415,6 +415,45 @@ class AivaVoiceService {
     return false;
   }
 
+  async makePhoneCall(phoneNumber: string): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.makePhoneCall) {
+      try {
+        await AivaVoiceModule.makePhoneCall(phoneNumber);
+        return true;
+      } catch (err: any) {
+        console.warn(`[AIVA Voice] Failed to make phone call to "${phoneNumber}":`, err?.message);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  async sendSms(phoneNumber: string, messageText: string): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.sendSms) {
+      try {
+        await AivaVoiceModule.sendSms(phoneNumber, messageText);
+        return true;
+      } catch (err: any) {
+        console.warn(`[AIVA Voice] Failed to send SMS to "${phoneNumber}":`, err?.message);
+        return false;
+      }
+    }
+    return false;
+  }
+
+  async createCalendarEvent(title: string, description: string = '', startTimeMillis: number = 0, endTimeMillis: number = 0): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.createCalendarEvent) {
+      try {
+        await AivaVoiceModule.createCalendarEvent(title, description, startTimeMillis, endTimeMillis);
+        return true;
+      } catch (err: any) {
+        console.warn(`[AIVA Voice] Failed to create calendar event "${title}":`, err?.message);
+        return false;
+      }
+    }
+    return false;
+  }
+
   subscribeState(listener: (state: VoiceState) => void) {
     this.stateListeners.push(listener);
     return () => {
