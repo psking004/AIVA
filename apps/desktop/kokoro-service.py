@@ -77,78 +77,169 @@ import subprocess
 
 # Registry of supported applications and web services
 APP_REGISTRY = {
+    # Web & Online Services
     "chatgpt": "https://chatgpt.com",
     "browser": "https://www.google.com",
     "google": "https://www.google.com",
-    "chrome": "chrome",
+    "youtube": "https://www.youtube.com",
+    "github": "https://github.com",
+    "claude": "https://claude.ai",
+
+    # Microsoft Office Suite
+    "excel": "excel.exe",
+    "microsoft excel": "excel.exe",
+    "ms excel": "excel.exe",
+    "word": "winword.exe",
+    "microsoft word": "winword.exe",
+    "ms word": "winword.exe",
+    "winword": "winword.exe",
+    "powerpoint": "powerpnt.exe",
+    "microsoft powerpoint": "powerpnt.exe",
+    "ms powerpoint": "powerpnt.exe",
+    "powerpnt": "powerpnt.exe",
+    "ppt": "powerpnt.exe",
+    "outlook": "outlook.exe",
+    "microsoft outlook": "outlook.exe",
+    "ms outlook": "outlook.exe",
+    "onenote": "onenote.exe",
+    "microsoft onenote": "onenote.exe",
+    "teams": "msteams.exe",
+    "microsoft teams": "msteams.exe",
+    "edge": "msedge.exe",
+    "microsoft edge": "msedge.exe",
+    "msedge": "msedge.exe",
+
+    # Browsers & Communication
+    "chrome": "chrome.exe",
+    "google chrome": "chrome.exe",
+    "spotify": "spotify",
+    "discord": "discord",
+
+    # Development & System Tools
     "notepad": "notepad.exe",
     "notes": "notepad.exe",
     "calculator": "calc.exe",
     "calc": "calc.exe",
     "terminal": "wt.exe",
+    "windows terminal": "wt.exe",
     "powershell": "powershell.exe",
+    "cmd": "cmd.exe",
+    "command prompt": "cmd.exe",
     "cursor": "cursor",
     "vscode": "code",
     "vs code": "code",
+    "visual studio code": "code",
     "code": "code",
     "explorer": "explorer.exe",
     "files": "explorer.exe",
-    "spotify": "spotify",
-    "discord": "discord",
-    "youtube": "https://www.youtube.com",
-    "github": "https://github.com",
+    "file explorer": "explorer.exe",
+    "task manager": "taskmgr.exe",
+    "taskmanager": "taskmgr.exe",
+    "taskmgr": "taskmgr.exe",
+    "settings": "ms-settings:",
+    "windows settings": "ms-settings:",
 }
 
 def execute_app_launch(app_name):
     import shutil
-    clean_name = str(app_name).lower().strip()
-    for prefix in ("open ", "launch ", "start ", "switch to "):
+    raw_clean = str(app_name).strip().strip(".,!?:;'\"")
+    clean_name = raw_clean.lower()
+    for prefix in ("open ", "launch ", "start ", "run ", "switch to "):
         if clean_name.startswith(prefix):
             clean_name = clean_name[len(prefix):].strip()
 
-    for suffix in (" in pcb", " on pcb", " at pcb", " in pca", " on pca", " at pca"):
+    for suffix in (" in pcb", " on pcb", " at pcb", " in pca", " on pca", " at pca", " in pc-b", " on pc-b", " at pc-b", " in pc-a", " on pc-a", " at pc-a"):
         if clean_name.endswith(suffix):
             clean_name = clean_name[:-len(suffix)].strip()
 
+    clean_name = clean_name.strip(".,!?:;'\"")
+
     target_cmd = APP_REGISTRY.get(clean_name, None)
 
+    stripped_brand = clean_name
+    for brand_prefix in ("microsoft ", "google ", "ms "):
+        if stripped_brand.startswith(brand_prefix):
+            stripped_brand = stripped_brand[len(brand_prefix):].strip()
+            break
+
+    if not target_cmd:
+        target_cmd = APP_REGISTRY.get(stripped_brand, None)
+
+    display_name = clean_name.title() if len(clean_name) > 3 else clean_name.upper()
+
     # 1. If it's a known URL or web app
-    if target_cmd and target_cmd.startswith("http"):
+    if target_cmd and (target_cmd.startswith("http://") or target_cmd.startswith("https://")):
         try:
             webbrowser.open(target_cmd)
-            return True, f"Opened {clean_name} in default browser."
+            return True, f"Opened {display_name} in default browser."
         except Exception as ex:
             return False, f"Failed to open browser: {str(ex)}"
 
-    # 2. If it's a registered binary or URI protocol
+    # 2. Registered target execution (binary, URI scheme, or shell command)
     if target_cmd:
         try:
-            subprocess.Popen(target_cmd, shell=True)
-            return True, f"Opened {clean_name} on PC-B."
+            os.startfile(target_cmd)
+            return True, f"Opened {display_name} on PC-B."
         except Exception:
             pass
 
-    # 3. Dynamic search: check if it's an executable in PATH
-    bin_path = shutil.which(clean_name) or shutil.which(f"{clean_name}.exe")
-    if bin_path:
         try:
-            subprocess.Popen(f'"{bin_path}"', shell=True)
-            return True, f"Opened {clean_name} on PC-B."
+            subprocess.Popen(target_cmd, shell=True)
+            return True, f"Opened {display_name} on PC-B."
+        except Exception:
+            pass
+
+    # 3. Dynamic search across candidates: check PATH and Windows App Paths / startfile
+    candidates = [clean_name, stripped_brand, f"{clean_name}.exe", f"{stripped_brand}.exe"]
+    for cand in candidates:
+        if not cand:
+            continue
+        bin_path = shutil.which(cand)
+        if bin_path:
+            try:
+                subprocess.Popen(f'"{bin_path}"', shell=True)
+                return True, f"Opened {display_name} on PC-B."
+            except Exception:
+                pass
+
+        try:
+            os.startfile(cand)
+            return True, f"Opened {display_name} on PC-B."
         except Exception:
             pass
 
     # 4. Check if it's a registered URI scheme or protocol association (e.g. spotify:, calc:)
-    try:
-        os.startfile(clean_name if clean_name.startswith("http") else f"{clean_name}:")
-        return True, f"Opened {clean_name} on PC-B."
-    except Exception:
-        pass
+    if " " not in clean_name and not clean_name.endswith(":"):
+        try:
+            os.startfile(f"{clean_name}:")
+            return True, f"Opened {display_name} on PC-B."
+        except Exception:
+            pass
 
-    return False, f"Could not launch {clean_name}: application or protocol not found."
+    return False, f"Could not launch {app_name}: application or protocol not found."
 
 def resolve_desktop_app_command(app_name):
-    clean = app_name.lower().strip()
-    return APP_REGISTRY.get(clean, clean)
+    if not app_name:
+        return ""
+    clean = str(app_name).lower().strip().strip(".,!?:;'\"")
+    for prefix in ("open ", "launch ", "start ", "run ", "switch to "):
+        if clean.startswith(prefix):
+            clean = clean[len(prefix):].strip()
+    for suffix in (" in pcb", " on pcb", " at pcb", " in pca", " on pca", " at pca", " in pc-b", " on pc-b", " at pc-b", " in pc-a", " on pc-a", " at pc-a"):
+        if clean.endswith(suffix):
+            clean = clean[:-len(suffix)].strip()
+    clean = clean.strip(".,!?:;'\"")
+
+    if clean in APP_REGISTRY:
+        return APP_REGISTRY[clean]
+
+    for brand in ("microsoft ", "google ", "ms "):
+        if clean.startswith(brand):
+            sub = clean[len(brand):].strip()
+            if sub in APP_REGISTRY:
+                return APP_REGISTRY[sub]
+
+    return clean
 
 class KokoroHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):

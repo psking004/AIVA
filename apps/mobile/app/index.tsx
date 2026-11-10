@@ -89,13 +89,20 @@ export default function MobileHomeScreen() {
     }
   }, []);
 
-  // Return to DORMANT after idle (8s default matching PC specification)
-  const scheduleDormancy = useCallback((delayMs: number = 8000) => {
-    if (activeOverlayRef.current || voiceStateRef.current !== 'IDLE' || textInputRef.current.trim().length > 0 || showTypingFallback) return;
-    if (dormancyTimerRef.current) clearTimeout(dormancyTimerRef.current);
+  // Return to DORMANT after idle (4s default matching specification)
+  const scheduleDormancy = useCallback((delayMs: number = 4000, force: boolean = false) => {
+    if (!force) {
+      if (activeOverlayRef.current || textInputRef.current.trim().length > 0 || showTypingFallback) return;
+      if (voiceStateRef.current === 'LISTENING') return;
+    }
+    if (dormancyTimerRef.current) {
+      clearTimeout(dormancyTimerRef.current);
+      dormancyTimerRef.current = null;
+    }
 
     dormancyTimerRef.current = setTimeout(() => {
-      if (activeOverlayRef.current || voiceStateRef.current !== 'IDLE' || textInputRef.current.trim().length > 0 || showTypingFallback) return;
+      if (voiceStateRef.current === 'LISTENING' || textInputRef.current.trim().length > 0) return;
+      console.log('[AIVA Mobile] Dormancy timer elapsed: transitioning presence to DORMANT');
       setPresenceState('DORMANT');
       setFaceState('IDLE');
       setLastResponseText(null);
@@ -160,7 +167,7 @@ export default function MobileHomeScreen() {
         speakingEndTimeRef.current = Date.now();
         if (voiceStateRef.current !== 'LISTENING') {
           setFaceState('IDLE');
-          scheduleDormancy(4000);
+          scheduleDormancy(4000, true);
         }
       }
     },
@@ -459,6 +466,7 @@ export default function MobileHomeScreen() {
       } finally {
         clearTimeout(watchdog);
         isProcessingRef.current = false;
+        scheduleDormancy(4000, true);
       }
     },
     [clearTimers, speakResponse, scheduleDormancy]
@@ -509,6 +517,7 @@ export default function MobileHomeScreen() {
   // Sync native voice service events
   useEffect(() => {
     const unsub = aivaVoiceService.subscribe((state, event) => {
+      voiceStateRef.current = state;
       setVoiceState(state);
 
       if (state === 'LISTENING') {
@@ -524,11 +533,12 @@ export default function MobileHomeScreen() {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
+        scheduleDormancy(2500, true);
       } else if (state === 'ERROR') {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
-        scheduleDormancy(3000);
+        scheduleDormancy(3000, true);
       } else if (state === 'DORMANT') {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
@@ -538,7 +548,7 @@ export default function MobileHomeScreen() {
         speakingEndTimeRef.current = Date.now();
         isProcessingRef.current = false;
         setFaceState('IDLE');
-        scheduleDormancy(6000);
+        scheduleDormancy(4000, true);
       }
 
       if (event?.type === 'RESULT' && event.text) {
@@ -613,7 +623,7 @@ export default function MobileHomeScreen() {
         }
         wakeAivaPresence(false);
       } else if (state === 'IDLE' && voiceStateRef.current === 'IDLE' && !textInputRef.current.trim().length && !showTypingFallback) {
-        scheduleDormancy(5000);
+        scheduleDormancy(4000);
       }
     });
 
@@ -631,6 +641,7 @@ export default function MobileHomeScreen() {
 
     setIsSending(true);
     setTextInput('');
+    textInputRef.current = '';
     setShowTypingFallback(false);
     await handleProcessVoiceCommand(text);
     setIsSending(false);
