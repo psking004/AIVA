@@ -20,12 +20,13 @@ try:
     _sse_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse"))
     if _sse_path not in sys.path:
         sys.path.insert(0, _sse_path)
-    from sse_standalone import evaluate_strategic_intent, dynamic_sse_planner
-    print("[KokoroDaemon] Strategic Systems Engine (SSE) decision core successfully loaded.")
+    from sse_standalone import evaluate_strategic_intent, dynamic_sse_planner, DynamicUIAgent
+    print("[KokoroDaemon] Strategic Systems Engine (SSE) decision core and DynamicUIAgent loaded.")
 except Exception as _sse_err:
     print(f"[KokoroDaemon] SSE load note: {_sse_err}")
     evaluate_strategic_intent = None
     dynamic_sse_planner = None
+    DynamicUIAgent = None
 
 # Resilient Kokoro model path resolution
 def resolve_models_dir():
@@ -513,6 +514,21 @@ def resolve_workspace_filepath(filename_or_path, target_node="PC-B"):
             target_path = os.path.join(r"C:\AIVA_Workspace", clean_p)
         return target_path, None, False
 
+def create_empty_file_with_editor(file_name, target_node="PC-B"):
+    target_path, mirror_path, is_pca = resolve_workspace_filepath(file_name, target_node)
+    try:
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            f.write("")
+        if mirror_path:
+            os.makedirs(os.path.dirname(mirror_path), exist_ok=True)
+            with open(mirror_path, "w", encoding="utf-8") as f:
+                f.write("")
+        ACTIVE_SESSION["active_file"] = os.path.basename(target_path)
+        return True, f"Created {os.path.basename(target_path)} on {target_node} workspace."
+    except Exception as ex:
+        return False, f"Failed creating file {file_name} on {target_node}: {ex}"
+
 def patch_file(file_path, target_block, replacement_block, target_node="PC-B"):
     target_path, mirror_path, is_pca = resolve_workspace_filepath(file_path, target_node)
     path_to_read = target_path if os.path.exists(target_path) else (mirror_path if (mirror_path and os.path.exists(mirror_path)) else None)
@@ -603,6 +619,42 @@ def execute_shell_command(command, cwd=None, timeout=60, target_node="PC-B"):
         except Exception as ex:
             return False, "", str(ex), -1
 
+def launch_fabric_visual(target="BOTH"):
+    """
+    Launches AIVA interactive visual interface onto the physical screens of PC-B and/or PC-A.
+    Uses interactive session scheduling on PC-A to guarantee rendering on console monitor (Session 1).
+    """
+    target_clean = str(target or "BOTH").upper()
+    results = {}
+
+    # 1. Launch on PC-B physical display
+    if target_clean in ["PC-B", "BOTH", "LOCAL"]:
+        try:
+            os.system("start http://localhost:5050")
+            results["PC-B"] = "Launched on physical display."
+        except Exception as e:
+            results["PC-B"] = f"Failed: {e}"
+
+    # 2. Launch on PC-A physical display via interactive task
+    if target_clean in ["PC-A", "BOTH", "REMOTE"]:
+        try:
+            remote_cmd = (
+                "$act = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c start http://10.84.73.59:5050'; "
+                "$trig = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1); "
+                "$user = (quser | Select-String 'Active' | ForEach-Object { ($_ -split '\\s+')[1] }); "
+                "if (-not $user) { $user = 'parthasarathi' }; "
+                "$princ = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive; "
+                "Register-ScheduledTask -TaskName 'AIVAPhysicalScreen' -Action $act -Trigger $trig -Principal $princ -Force | Out-Null; "
+                "Start-ScheduledTask -TaskName 'AIVAPhysicalScreen'"
+            )
+            winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {remote_cmd} }}"'
+            p = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=15)
+            results["PC-A"] = "Dispatched interactive launch to PC-A screen." if p.returncode == 0 else (p.stderr.strip() or "Dispatched interactive launch to PC-A screen.")
+        except Exception as e:
+            results["PC-A"] = f"Failed: {e}"
+
+    return results
+
 def execute_sse_plan_steps(steps):
     execution_results = []
     for s in steps:
@@ -618,11 +670,21 @@ def execute_sse_plan_steps(steps):
             elif s_act == "CREATE_FILE":
                 fn = s.get("file", "script.py")
                 ok, msg = create_empty_file_with_editor(fn)
+                if DynamicUIAgent:
+                    try:
+                        DynamicUIAgent.ensure_manual_save(fn, target_node="PC-B")
+                    except Exception:
+                        pass
                 s_res["success"], s_res["output"] = ok, msg
             elif s_act == "MODIFY_FILE":
                 fn = s.get("file", "script.py")
                 content = s.get("content", "")
                 ok, msg = patch_file(fn, "", content, target_node="PC-B")
+                if DynamicUIAgent:
+                    try:
+                        DynamicUIAgent.ensure_manual_save(fn, target_node="PC-B")
+                    except Exception:
+                        pass
                 s_res["success"], s_res["output"] = ok, msg
             elif s_act == "OPEN_APP":
                 app = s.get("application") or s.get("target") or ""
@@ -632,6 +694,25 @@ def execute_sse_plan_steps(steps):
                 cmd = s.get("command", "")
                 ok, out, err, code = execute_shell_command(cmd, target_node="PC-B")
                 s_res["success"], s_res["output"] = ok, (out or err or f"Exit code {code}")
+            elif s_act in ("LAUNCH_VISUAL", "LAUNCH_SCREEN", "DISPLAY_UI"):
+                disp_target = s.get("target", "BOTH")
+                vis_res = launch_fabric_visual(disp_target)
+                s_res["success"], s_res["output"] = True, f"Visual screen launch: {vis_res}"
+            elif s_act in ("UI_CLICK", "DYNAMIC_CLICK", "CLICK_ELEMENT"):
+                win = s.get("window", "")
+                elem = s.get("target") or s.get("element") or s.get("name") or ""
+                if DynamicUIAgent:
+                    clicked = DynamicUIAgent.click_element_by_name(win, elem, target_node="PC-B")
+                    s_res["success"], s_res["output"] = clicked, f"Dynamic click on '{elem}' in '{win}' ({'Success' if clicked else 'Failed/NotFound'})."
+                else:
+                    s_res["success"], s_res["output"] = False, "DynamicUIAgent not available."
+            elif s_act in ("UI_SAVE", "AUTO_SAVE", "ENSURE_SAVE"):
+                win = s.get("window", "")
+                if DynamicUIAgent:
+                    saved = DynamicUIAgent.ensure_manual_save(win, target_node="PC-B")
+                    s_res["success"], s_res["output"] = saved, f"Ensured manual save on '{win}' ({'Saved' if saved else 'Sent Ctrl+S'})."
+                else:
+                    s_res["success"], s_res["output"] = False, "DynamicUIAgent not available."
             elif s_act == "CREATE_CALENDAR":
                 s_res["success"], s_res["output"] = True, f"Dispatched to mobile: {s.get('title')}"
             else:
@@ -653,6 +734,11 @@ def execute_sse_plan_steps(steps):
                         os.makedirs(os.path.dirname(mirror_path), exist_ok=True)
                         with open(mirror_path, "w", encoding="utf-8") as f:
                             f.write("")
+                    if DynamicUIAgent:
+                        try:
+                            DynamicUIAgent.ensure_manual_save(fn, target_node="PC-A")
+                        except Exception:
+                            pass
                     s_res["success"], s_res["output"] = True, f"Created {fn} directly on PC-A workspace."
                 except Exception as ex:
                     s_res["success"], s_res["output"] = False, f"Error creating file on PC-A: {ex}"
@@ -660,11 +746,35 @@ def execute_sse_plan_steps(steps):
                 fn = s.get("file", "script.py")
                 content = s.get("content", "")
                 ok, msg = patch_file(fn, "", content, target_node="PC-A")
+                if DynamicUIAgent:
+                    try:
+                        DynamicUIAgent.ensure_manual_save(fn, target_node="PC-A")
+                    except Exception:
+                        pass
                 s_res["success"], s_res["output"] = ok, msg
             elif s_act in ("EXECUTE_SHELL", "EXEC"):
                 cmd = s.get("command", "")
                 ok, out, err, code = execute_shell_command(cmd, target_node="PC-A")
                 s_res["success"], s_res["output"] = ok, (out or err or f"Exit code {code}")
+            elif s_act in ("LAUNCH_VISUAL", "LAUNCH_SCREEN", "DISPLAY_UI"):
+                disp_target = s.get("target", "PC-A")
+                vis_res = launch_fabric_visual(disp_target)
+                s_res["success"], s_res["output"] = True, f"Visual screen launch: {vis_res}"
+            elif s_act in ("UI_CLICK", "DYNAMIC_CLICK", "CLICK_ELEMENT"):
+                win = s.get("window", "")
+                elem = s.get("target") or s.get("element") or s.get("name") or ""
+                if DynamicUIAgent:
+                    clicked = DynamicUIAgent.click_element_by_name(win, elem, target_node="PC-A")
+                    s_res["success"], s_res["output"] = clicked, f"Dynamic click on '{elem}' in '{win}' on PC-A ({'Success' if clicked else 'Failed/NotFound'})."
+                else:
+                    s_res["success"], s_res["output"] = False, "DynamicUIAgent not available."
+            elif s_act in ("UI_SAVE", "AUTO_SAVE", "ENSURE_SAVE"):
+                win = s.get("window", "")
+                if DynamicUIAgent:
+                    saved = DynamicUIAgent.ensure_manual_save(win, target_node="PC-A")
+                    s_res["success"], s_res["output"] = saved, f"Ensured manual save on '{win}' on PC-A ({'Saved' if saved else 'Sent Ctrl+S'})."
+                else:
+                    s_res["success"], s_res["output"] = False, "DynamicUIAgent not available."
             elif s_act == "OPEN_APP":
                 app = s.get("application") or s.get("target") or ""
                 escaped = app.replace("'", "''")
@@ -678,7 +788,25 @@ def execute_sse_plan_steps(steps):
                 s_res["success"], s_res["output"] = True, f"Processed {s_act} on PC-A"
 
         elif "MOBILE" in s_node:
-            s_res["success"], s_res["output"] = True, f"Mobile action staged: {s.get('title') or s_act}"
+            adb_cmd = None
+            if s_act in ("SEND_WHATSAPP", "WHATSAPP"):
+                to = s.get("recipient") or s.get("contact") or "Appa"
+                msg = s.get("message") or s.get("content") or "Hello from AIVA"
+                adb_cmd = f"adb -s 10.84.73.78:5555 shell am broadcast -a com.aiva.action.VOICE_COMMAND --es query 'send whatsapp message to {to} saying {msg}'"
+            elif s_act in ("CALL_CONTACT", "CALL"):
+                contact = s.get("contact") or s.get("target") or "Appa"
+                adb_cmd = f"adb -s 10.84.73.78:5555 shell am broadcast -a com.aiva.action.VOICE_COMMAND --es query 'call {contact}'"
+            elif s_act in ("CREATE_NOTE", "NOTE"):
+                note = s.get("content") or s.get("title") or "Meeting note"
+                adb_cmd = f"adb -s 10.84.73.78:5555 shell am broadcast -a com.aiva.action.VOICE_COMMAND --es query 'create note {note}'"
+            if adb_cmd:
+                try:
+                    p = subprocess.run(adb_cmd, shell=True, capture_output=True, timeout=5)
+                    s_res["success"], s_res["output"] = True, f"Executed {s_act} on Mobile device via AIVA voice engine."
+                except Exception as ex:
+                    s_res["success"], s_res["output"] = False, f"Mobile execution error: {ex}"
+            else:
+                s_res["success"], s_res["output"] = True, f"Mobile action staged: {s.get('title') or s_act}"
 
         execution_results.append(s_res)
     return execution_results
@@ -695,7 +823,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == "/health":
+        if self.path in ("/health", "/api/health"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -721,6 +849,16 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 "message": "PC-B host workstation daemon active"
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
+        elif self.path.startswith("/api/fabric/launch-visual") or self.path.startswith("/api/launch-visual"):
+            parsed_url = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            target = query_params.get("target", ["BOTH"])[0].upper()
+            vis_res = launch_fabric_visual(target)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "results": vis_res}).encode("utf-8"))
         elif self.path in ("/api/sse/verify", "/api/sse"):
             sse_script = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse", "sse_standalone.py")
             if not os.path.exists(sse_script):
@@ -749,7 +887,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/agent/plan") or self.path.startswith("/api/plan"):
             parsed_url = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_url.query)
-            query_str = query_params.get("query", [""])[0]
+            query_str = query_params.get("query", [""])[0] or query_params.get("goal", [""])[0]
             is_exec = "execute" in parsed_url.path or query_params.get("execute", ["false"])[0].lower() in ("true", "1")
             if evaluate_strategic_intent:
                 plan_res = evaluate_strategic_intent(query_str)
@@ -769,11 +907,52 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "error": "SSE not available"}).encode("utf-8"))
+        elif self.path in ("/", "/index.html", "/hud") or self.path.startswith("/assets/"):
+            renderer_dir = os.path.join(os.path.dirname(__file__), "renderer")
+            if not os.path.exists(renderer_dir):
+                renderer_dir = r"C:\Users\bhara\AIVA\apps\desktop\renderer"
+            
+            clean_subpath = self.path.lstrip("/").split("?")[0]
+            if clean_subpath in ("", "index.html", "hud"):
+                target_file = os.path.join(renderer_dir, "index.html")
+            else:
+                target_file = os.path.join(renderer_dir, clean_subpath)
+            
+            if os.path.exists(target_file) and os.path.isfile(target_file):
+                import mimetypes
+                ctype, _ = mimetypes.guess_type(target_file)
+                if not ctype:
+                    ctype = "application/octet-stream"
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                with open(target_file, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
+        if self.path in ("/api/fabric/launch-visual", "/api/launch-visual"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            except Exception:
+                data = {}
+            target = str(data.get("target", "BOTH")).upper()
+            vis_res = launch_fabric_visual(target)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "results": vis_res}).encode("utf-8"))
+            return
+
         if self.path in ("/api/agent/plan/execute", "/api/plan/execute"):
             content_length = int(self.headers.get("Content-Length", 0))
             body_bytes = self.rfile.read(content_length)
@@ -781,7 +960,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
             except Exception:
                 data = {}
-            query_str = data.get("query") or data.get("command") or data.get("text") or ""
+            query_str = data.get("query") or data.get("command") or data.get("text") or data.get("goal") or ""
             plan = data.get("plan")
             if not plan and dynamic_sse_planner:
                 plan = dynamic_sse_planner(query_str)

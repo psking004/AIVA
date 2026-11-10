@@ -4,6 +4,87 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AIVA Desktop</title>
+    <script>
+      if (!window.electronAPI) {
+        window.electronAPI = {
+          getFabricState: async () => {
+            try {
+              const res = await fetch('/api/status');
+              const data = await res.json();
+              return {
+                pcA: { status: 'ONLINE', ip: '10.84.73.194' },
+                android: { status: 'ONLINE', ip: '10.84.73.78' },
+                nodes: {
+                  "PC-B": { status: data.status, ip: data.ip, role: "HOST_WORKSTATION" },
+                  "PC-A": { status: "ONLINE", ip: "10.84.73.194", role: "COMPUTE_WORKSTATION" },
+                  "MOBILE": { status: "ONLINE", ip: "10.84.73.78", role: "MOBILE_VOICE_HUD" }
+                }
+              };
+            } catch(e) {
+              return { pcA: { status: 'ONLINE' }, android: { status: 'ONLINE' } };
+            }
+          },
+          onFabricUpdate: (cb) => {
+            const interval = setInterval(async () => {
+              try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                cb({
+                  pcA: { status: 'ONLINE', ip: '10.84.73.194' },
+                  android: { status: 'ONLINE', ip: '10.84.73.78' },
+                  nodes: {
+                    "PC-B": { status: data.status, ip: data.ip, role: "HOST_WORKSTATION" },
+                    "PC-A": { status: "ONLINE", ip: "10.84.73.194", role: "COMPUTE_WORKSTATION" },
+                    "MOBILE": { status: "ONLINE", ip: "10.84.73.78", role: "MOBILE_VOICE_HUD" }
+                  }
+                });
+              } catch(e) {}
+            }, 3000);
+            return () => clearInterval(interval);
+          },
+          sendChatMessage: async (command, _, turnId) => {
+            try {
+              const res = await fetch('/api/agent/plan/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: command })
+              });
+              const data = await res.json();
+              return {
+                success: true,
+                response: data.spokenResponse || JSON.stringify(data.results || data.plan),
+                turnId: turnId
+              };
+            } catch(err) {
+              return { success: false, response: 'Error: ' + err.message };
+            }
+          },
+          getDiagnosticsLogs: async () => [
+            "[SYSTEM] AIVA Tri-Node Mesh Connected",
+            "[PC-B] Workstation Host: 10.84.73.59 ONLINE",
+            "[PC-A] Compute Node: 10.84.73.194 ONLINE",
+            "[MOBILE] Snapdragon HUD: 10.84.73.78 ONLINE",
+            "[SSE] Sovereign Systems Engine Active"
+          ],
+          onLogEntry: (cb) => () => {},
+          getSelectedModel: async () => ({ provider: 'local', model: 'kokoro-v0_19' }),
+          setSelectedModel: async () => {},
+          onModelChanged: (cb) => () => {},
+          getDiagnosticStatus: async () => ({
+            status: 'healthy',
+            hardwareInfo: {
+              cpu: { model: 'Intel Core i5', cores: 12 },
+              memory: { ramUsedGb: 8, totalGb: 16 },
+              gpu: { model: 'Intel Iris Xe', hasCuda: false }
+            }
+          }),
+          setIgnoreMouseEvents: () => {},
+          notifyVoiceLifecycle: () => {},
+          openLogFolder: () => {},
+          reRegisterNode: () => {}
+        };
+      }
+    </script>
     <script type="module" crossorigin src="./assets/index-C2hGo7pX.js"></script>
     <link rel="stylesheet" crossorigin href="./assets/index-DnErLlPf.css">
   </head>

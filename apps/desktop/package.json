@@ -4,6 +4,7 @@
     "private":  true,
     "main":  "main.js",
     "scripts": {
+        "start": "electron .",
         "dev": "electron .",
         "dev:renderer": "vite",
         "typecheck": "tsc --noEmit",
