@@ -11,12 +11,12 @@ import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
 
 export type NodeTarget = 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION';
+export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CLOSE_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION' | 'PLAN';
 
 export interface RemoteExecIntent {
   isRemoteExec: boolean;
   targetNode: 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
-  action: 'STATUS' | 'LAUNCH_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION';
+  action: 'STATUS' | 'LAUNCH_APP' | 'CLOSE_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'EXEC' | 'BUILD' | 'TEST' | 'CODE' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION' | 'PLAN';
   application?: string;
   command?: string;
   text?: string;
@@ -280,7 +280,21 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 5. APP LAUNCHING ON WORKSTATIONS
+  // 5. WORKSTATION APP TERMINATION (CLOSE / KILL / STOP / EXIT)
+  const closeMatch = strippedQuery.match(/^(?:close|kill|exit|stop|terminate|shut down|quit)\s+(?:app\s+|application\s+)?([a-z0-9\s_.-]+)$/i);
+  if (closeMatch) {
+    const appToClose = closeMatch[1].trim();
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'CLOSE_APP',
+      application: appToClose,
+      command: appToClose,
+      query: clean,
+    };
+  }
+
+  // 6. APP LAUNCHING ON WORKSTATIONS
   const launchMatch = strippedQuery.match(/^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+)$/i);
   if (launchMatch && targetNode !== 'MOBILE') {
     return {
@@ -292,7 +306,18 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 6. STATUS CHECKS (Strict, avoids swallowing coding/file tasks)
+  // 7. STRATEGIC PLANNING / GAME THEORY ENGINE (SSE)
+  if (/\b(?:plan|strategy|strategic|game\s+theory|route\s+task|solver\s+tier)\b/i.test(strippedQuery) || /^(?:what\s+node|which\s+node|plan\s+task)\b/i.test(strippedQuery)) {
+    return {
+      isRemoteExec: true,
+      targetNode: 'PC-B',
+      action: 'PLAN',
+      command: strippedQuery,
+      query: clean,
+    };
+  }
+
+  // 8. STATUS CHECKS (Strict, avoids swallowing coding/file tasks)
   if (/\b(?:status|health|ping|check|how\s+is)\b/i.test(strippedQuery) && targetNode !== 'MOBILE') {
     return {
       isRemoteExec: true,

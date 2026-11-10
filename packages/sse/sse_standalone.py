@@ -358,6 +358,99 @@ class SovereignDecisionCore:
         return best_i, avg_util, min_worst_case_regret
 
 
+def evaluate_strategic_intent(query: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Game-theoretic routing engine for distributed AIVA tri-node fabric (MOBILE, PC_B, PC_A).
+    
+    Constructs a 2-player bimatrix game between P1 (AIVA Planner choosing node action:
+    MOBILE, PC_B, or PC_A) and P2 (Environment/Mesh State: OPTIMAL_MESH or HIGH_LATENCY_PARTITION),
+    evaluating payoffs across Tier 1 (IESDS), Tier 2 (Stackelberg), and Tier 3 (Minimax Regret).
+    """
+    q = (query or "").lower().strip()
+    actions_p1 = [NodeID.MOBILE.value, NodeID.PC_B.value, NodeID.PC_A.value]  # ["MOBILE", "PC_B", "PC_A"]
+    actions_p2 = ["OPTIMAL_MESH", "HIGH_LATENCY_PARTITION"]
+
+    # Compute operational affinities:
+    # 1. GPU / Heavy compute / Local LLM / Ollama -> High affinity for PC_A (RTX 3050)
+    # 2. Desktop GUI / Workspace / Office / Browsers -> High affinity for PC_B (Host workstation)
+    # 3. Native mobile device (Notes, Camera, Battery, Calls, Alarms) -> High affinity for MOBILE
+    is_gpu = any(k in q for k in ["gpu", "ollama", "llm", "llama", "deepseek", "heavy", "model", "train", "cuda", "vram"])
+    is_desktop = any(k in q for k in ["excel", "calc", "word", "powerpoint", "desktop", "pcb", "pc-b", "pc b", "window", "terminal", "powershell", "code", "file"])
+    is_mobile = any(k in q for k in ["note", "notes", "camera", "alarm", "phone", "battery", "sms", "call", "mobile", "android"])
+
+    if "pca" in q or "pc-a" in q or "pc a" in q:
+        is_gpu = True
+    elif "pcb" in q or "pc-b" in q or "pc b" in q:
+        is_desktop = True
+
+    if is_gpu:
+        # PC_A dominant on optimal mesh; if partitioned, PC_B fallback
+        u1 = [
+            [1.0, 1.0],   # MOBILE
+            [6.0, 5.0],   # PC_B
+            [10.0, 2.0],  # PC_A
+        ]
+        u2 = [
+            [2.0, 1.0],
+            [7.0, 6.0],
+            [9.0, 3.0],
+        ]
+    elif is_desktop:
+        # PC_B dominant
+        u1 = [
+            [2.0, 2.0],   # MOBILE
+            [10.0, 8.0],  # PC_B
+            [4.0, 2.0],   # PC_A
+        ]
+        u2 = [
+            [3.0, 2.0],
+            [9.0, 7.0],
+            [5.0, 3.0],
+        ]
+    elif is_mobile:
+        # MOBILE dominant (offline first!)
+        u1 = [
+            [10.0, 9.0],  # MOBILE
+            [3.0, 2.0],   # PC_B
+            [1.0, 0.0],   # PC_A
+        ]
+        u2 = [
+            [10.0, 9.0],
+            [4.0, 2.0],
+            [2.0, 1.0],
+        ]
+    else:
+        # General distributed task - balance between Mobile and PC_B
+        u1 = [
+            [6.0, 7.0],   # MOBILE
+            [8.0, 5.0],   # PC_B
+            [5.0, 2.0],   # PC_A
+        ]
+        u2 = [
+            [6.0, 8.0],
+            [8.0, 6.0],
+            [5.0, 3.0],
+        ]
+
+    core = SovereignDecisionCore(node_id=NodeID.PC_B, mode="STRATEGIC_PLAN")
+    verdict = core.solve_matrix(u1, u2, actions_p1=actions_p1, actions_p2=actions_p2)
+
+    return {
+        "success": True,
+        "query": query,
+        "target_node": verdict.action_name,
+        "action_index": verdict.action_idx,
+        "solver_tier": verdict.solver_tier,
+        "expected_utility": verdict.expected_utility,
+        "worst_case_regret": verdict.worst_case_regret,
+        "grant_token": verdict.grant_token,
+        "decision_id": verdict.decision_id,
+        "mode": verdict.mode,
+        "compact_payload": verdict.to_compact_payload(),
+        "rationale": f"Strategic Systems Engine routed query to {verdict.action_name} via {verdict.solver_tier} with expected utility {verdict.expected_utility:.2f}.",
+    }
+
+
+
 # ==============================================================================
 # 3. AIR-GAPPED APPEND-ONLY HASH LEDGER
 # ==============================================================================

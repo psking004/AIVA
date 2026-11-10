@@ -12,6 +12,17 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import soundfile as sf
 
+# Strategic Systems Engine (SSE) Dynamic Import
+try:
+    _sse_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse"))
+    if _sse_path not in sys.path:
+        sys.path.insert(0, _sse_path)
+    from sse_standalone import evaluate_strategic_intent
+    print("[KokoroDaemon] Strategic Systems Engine (SSE) decision core successfully loaded.")
+except Exception as _sse_err:
+    print(f"[KokoroDaemon] SSE load note: {_sse_err}")
+    evaluate_strategic_intent = None
+
 # Resilient Kokoro model path resolution
 def resolve_models_dir():
     candidates = [
@@ -259,6 +270,111 @@ def resolve_desktop_app_command(app_name):
 
     return clean
 
+APP_PROCESS_MAP = {
+    "excel": ["excel.exe"],
+    "microsoft excel": ["excel.exe"],
+    "word": ["winword.exe"],
+    "microsoft word": ["winword.exe"],
+    "powerpoint": ["powerpnt.exe"],
+    "microsoft powerpoint": ["powerpnt.exe"],
+    "notepad": ["notepad.exe"],
+    "calc": ["CalculatorApp.exe", "calc.exe"],
+    "calculator": ["CalculatorApp.exe", "calc.exe"],
+    "chrome": ["chrome.exe"],
+    "google chrome": ["chrome.exe"],
+    "edge": ["msedge.exe"],
+    "microsoft edge": ["msedge.exe"],
+    "browser": ["msedge.exe", "chrome.exe"],
+    "terminal": ["WindowsTerminal.exe", "wt.exe"],
+    "cmd": ["cmd.exe"],
+    "powershell": ["powershell.exe", "pwsh.exe"],
+    "vscode": ["Code.exe"],
+    "code": ["Code.exe"],
+    "task manager": ["Taskmgr.exe"],
+    "taskmgr": ["Taskmgr.exe"],
+    "spotify": ["Spotify.exe"],
+    "slack": ["slack.exe"],
+    "discord": ["Discord.exe"],
+    "asphalt": ["Asphalt8.exe"],
+    "asphalt 8": ["Asphalt8.exe"],
+    "chatgpt": ["msedge.exe", "chrome.exe"],
+}
+
+def execute_app_close(app_name):
+    """
+    Terminates running processes on PC-B by executable name, UWP process name, or window title.
+    """
+    if not app_name:
+        return False, "No application specified to close."
+
+    raw = str(app_name).strip()
+    clean = raw.lower()
+
+    for prefix in ["close ", "kill ", "exit ", "stop ", "terminate ", "shut down ", "quit "]:
+        if clean.startswith(prefix):
+            clean = clean[len(prefix):].strip()
+            raw = raw[len(prefix):].strip()
+
+    for suffix in [" in pcb", " on pcb", " at pcb", " in pca", " on pca", " at pca", " in pc-b", " on pc-b", " at pc-b", " in pc-a", " on pc-a", " at pc-a"]:
+        if clean.endswith(suffix):
+            clean = clean[:-len(suffix)].strip()
+            raw = raw[:-len(suffix)].strip()
+
+    clean = clean.strip(".,!?:;'\"")
+    raw = raw.strip(".,!?:;'\"")
+
+    if not clean:
+        return False, "No application specified to close."
+
+    # 1. Determine process candidates
+    candidates = []
+    if clean in APP_PROCESS_MAP:
+        candidates.extend(APP_PROCESS_MAP[clean])
+    else:
+        for k, v in APP_PROCESS_MAP.items():
+            if clean in k or k in clean:
+                candidates.extend(v)
+                break
+
+    if not candidates:
+        if not clean.endswith(".exe"):
+            candidates.append(f"{clean}.exe")
+        else:
+            candidates.append(clean)
+
+    # 2. Try taskkill /F /IM <proc>
+    terminated = False
+    for proc in candidates:
+        try:
+            res = subprocess.run(["taskkill", "/F", "/IM", proc], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                print(f"[AppClose] Terminated {proc} via taskkill")
+                terminated = True
+        except Exception as ex:
+            print(f"[AppClose] taskkill error on {proc}: {ex}")
+
+    if terminated:
+        return True, f"Closed {raw}."
+
+    # 3. Fallback: PowerShell Get-Process title / name match
+    try:
+        escaped_clean = clean.replace("'", "''")
+        ps_cmd = (
+            f"$procs = Get-Process -ErrorAction SilentlyContinue | Where-Object {{ "
+            f"$_.MainWindowTitle -like '*{escaped_clean}*' -or $_.ProcessName -like '*{escaped_clean}*' }}; "
+            f"if ($procs) {{ $procs | Stop-Process -Force -ErrorAction SilentlyContinue; 'SUCCESS' }} else {{ 'NOT_FOUND' }}"
+        )
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd],
+            capture_output=True, text=True, timeout=5
+        )
+        if "SUCCESS" in proc.stdout:
+            return True, f"Closed {raw}."
+    except Exception as ex:
+        print(f"[AppClose] PowerShell fallback error: {ex}")
+
+    return False, f"Could not find running process for {raw} to close."
+
 class KokoroHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"[KOKORO TTS] {format % args}\n")
@@ -322,11 +438,51 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps({"success": False, "spokenResponse": "SSE module not found in packages/sse."}).encode("utf-8"))
+        elif self.path.startswith("/api/agent/plan") or self.path.startswith("/api/plan"):
+            parsed_url = urllib.parse.urlparse(self.path)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            query_str = query_params.get("query", [""])[0]
+            if evaluate_strategic_intent:
+                plan_res = evaluate_strategic_intent(query_str)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(plan_res).encode("utf-8"))
+            else:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "SSE not available"}).encode("utf-8"))
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
+        if self.path in ("/api/agent/plan", "/api/plan"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length)
+            try:
+                data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            except Exception:
+                data = {}
+            query_str = data.get("query") or data.get("command") or data.get("text") or ""
+            if evaluate_strategic_intent:
+                plan_res = evaluate_strategic_intent(query_str)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(plan_res).encode("utf-8"))
+            else:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "SSE not available"}).encode("utf-8"))
+            return
+
         if self.path in ("/api/sse/verify", "/api/sse"):
             sse_script = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse", "sse_standalone.py")
             if not os.path.exists(sse_script):
@@ -755,7 +911,59 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "spokenResponse": spoken
                     }
 
-            # 4. Route for Strategic Systems Engine (SSE) Invariant Verification
+            # 4. Route for closing / killing desktop applications (PC-A & PC-B)
+            elif action in ("CLOSE_APP", "KILL_APP", "EXIT_APP", "STOP_APP", "TERMINATE_APP"):
+                app_target = application or command or query or ""
+                target_node = (target or "").upper()
+                if "PC-A" in target_node or "PCA" in target_node or "194" in target_node:
+                    pca_ip = "10.84.73.194"
+                    escaped = app_target.replace("'", "''")
+                    ps_cmd = f"Stop-Process -Name '{escaped}' -Force -ErrorAction SilentlyContinue"
+                    winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {ps_cmd} }}"'
+                    try:
+                        subprocess.Popen(winrm_cmd, shell=True)
+                        res_data = {
+                            "success": True,
+                            "node": "PC-A",
+                            "application": app_target,
+                            "spokenResponse": f"Closed {app_target} on PC-A."
+                        }
+                    except Exception as ex:
+                        res_data = {
+                            "success": False,
+                            "node": "PC-A",
+                            "spokenResponse": f"Failed closing {app_target} on PC-A: {str(ex)}"
+                        }
+                else:
+                    success, spoken = execute_app_close(app_target)
+                    res_data = {
+                        "success": success,
+                        "node": "PC-B",
+                        "application": app_target,
+                        "spokenResponse": spoken
+                    }
+
+            # 5. Route for Strategic Systems Engine Planning & Reasoning
+            elif action in ("PLAN", "STRATEGIC_PLAN", "AGENT_PLAN"):
+                plan_query = query or command or application or ""
+                if evaluate_strategic_intent:
+                    plan_result = evaluate_strategic_intent(plan_query)
+                    res_data = {
+                        "success": True,
+                        "node": "PC-B",
+                        "action": "PLAN",
+                        "plan": plan_result,
+                        "target_node": plan_result.get("target_node"),
+                        "spokenResponse": plan_result.get("rationale")
+                    }
+                else:
+                    res_data = {
+                        "success": False,
+                        "node": "PC-B",
+                        "spokenResponse": "Strategic Systems Engine is not loaded."
+                    }
+
+            # 6. Route for Strategic Systems Engine (SSE) Invariant Verification
             elif action in ("SSE_VERIFY", "VERIFY_SSE", "SSE"):
                 sse_script = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse", "sse_standalone.py")
                 if not os.path.exists(sse_script):

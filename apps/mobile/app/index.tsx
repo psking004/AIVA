@@ -277,11 +277,6 @@ export default function MobileHomeScreen() {
             const noteAction = parseNoteFollowUp(launchCmd.followUpAction);
 
             if (isNotesApp || noteAction.isNoteAction) {
-              const launched = await aivaVoiceService.launchApp(targetAppName);
-              let appResponse = launched
-                ? `Opening ${targetAppName}.`
-                : `I couldn't find ${targetAppName} installed on this device.`;
-
               if (noteAction.content) {
                 // 1. Instantly trigger native Android Notes app with populated text (offline-first)
                 try {
@@ -298,14 +293,26 @@ export default function MobileHomeScreen() {
                   console.warn('[AIVA Voice] Background cloud note sync skipped/failed (401 or offline):', noteErr?.message || noteErr);
                 });
 
-                appResponse = `Opening ${targetAppName}. Created note.`;
-              } else if (launchCmd.followUpAction) {
-                appResponse = `Opening ${targetAppName}.`;
+                const appResponse = 'Created note.';
+                setLastResponseText(appResponse);
+                await speakResponse(appResponse);
+                scheduleDormancy(2500);
+                return;
+              } else {
+                // Blank note request: open blank editor and arm STT for dictation
+                try {
+                  await aivaVoiceService.createNoteWithText('', 'com.vivo.notes');
+                } catch {
+                  await aivaVoiceService.launchApp(targetAppName);
+                }
+                const appResponse = 'Opened a new blank note. What would you like to write?';
+                setLastResponseText(appResponse);
+                await speakResponse(appResponse);
+                setTimeout(() => {
+                  aivaVoiceService.startListening();
+                }, 400);
+                return;
               }
-
-              setLastResponseText(appResponse);
-              await speakResponse(appResponse);
-              return;
             }
 
             const launched = await aivaVoiceService.launchApp(targetAppName);
@@ -320,18 +327,34 @@ export default function MobileHomeScreen() {
           }
         }
 
-        // 2. Prioritize Local Notes / Reminders / Lists Creation First (e.g. "Create a new note in notes about meeting at 5 PM", "Create a note buy milk")
+        // 2. Prioritize Local Notes / Reminders / Lists Creation First (e.g. "Create a new note in notes about meeting at 5 PM", "Create a note buy milk", "create note in notes")
         if (/\b(?:note|notes|list|reminder|memo)\b/i.test(clean) && !/\b(?:pca|pcb|pc\-?a|pc\-?b)\b/i.test(clean)) {
           clearTimeout(watchdog);
-          const notePayload = clean
-            .replace(/^(?:create|make|write|add|take|record)\s+(?:a\s+)?(?:new\s+)?(?:note|notes|list|reminder|memo)\s*(?:in\s+notes\s*)?(?:about|to|for|called|titled|with|saying|that|:)?\s*/i, '')
+          const extractedText = clean
+            .replace(/^(?:create|make|write|add|take|record)\s+(?:a\s+)?(?:new\s+)?(?:note|notes|list|reminder|memo)\s*(?:in\s+(?:the\s+)?notes(?:\s+app)?\s*)?(?:about|to|for|called|titled|with|saying|that|:)?\s*/i, '')
             .trim();
 
-          const noteContent = notePayload || "New Note";
+          const isBlankNoteRequest = !extractedText || /^(?:in\s+notes|notes|the\s+notes|app|blank|empty)$/i.test(extractedText);
 
-          // 1. Instantly trigger native Android Notes app with populated text (offline-first)
+          if (isBlankNoteRequest) {
+            // Open blank note, prompt user for content, and arm STT listener for dictation
+            try {
+              await aivaVoiceService.createNoteWithText('', 'com.vivo.notes');
+            } catch (err) {
+              await aivaVoiceService.launchApp('com.vivo.notes');
+            }
+            const spoken = 'Opened a new blank note. What would you like to write?';
+            setLastResponseText(spoken);
+            await speakResponse(spoken);
+            setTimeout(() => {
+              aivaVoiceService.startListening();
+            }, 400);
+            return;
+          }
+
+          // User provided note content: create note with text immediately (offline-first)
           try {
-            await aivaVoiceService.createNoteWithText(noteContent, 'com.vivo.notes');
+            await aivaVoiceService.createNoteWithText(extractedText, 'com.vivo.notes');
           } catch (err) {
             try {
               await aivaVoiceService.launchApp('com.vivo.notes');
@@ -340,18 +363,18 @@ export default function MobileHomeScreen() {
             }
           }
 
-          // 2. Fire-and-forget backend sync in background (do NOT await, avoid 401 stall)
+          // Fire-and-forget backend sync in background (do NOT await, avoid 401 stall)
           aivaClient.createNote({
-            title: noteContent.slice(0, 30),
-            content: noteContent,
+            title: extractedText.slice(0, 30),
+            content: extractedText,
           }).catch((err) => {
             console.warn('[AIVA Notes] Background cloud sync skipped/failed (401 or offline):', err?.message || err);
           });
 
-          const spoken = 'Created note and opened Notes.';
+          const spoken = 'Created note.';
           setLastResponseText(spoken);
           await speakResponse(spoken);
-          scheduleDormancy(3000);
+          scheduleDormancy(2500);
           return;
         }
 

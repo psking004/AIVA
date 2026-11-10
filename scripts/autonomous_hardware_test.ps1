@@ -18,7 +18,7 @@ Write-Host "  AIVA AUTONOMOUS TRI-NODE HARDWARE VERIFICATION HARNESS   " -Foregr
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $PassedStages = 0
-$TotalStages = 5
+$TotalStages = 6
 
 function Log-Stage($stageNum, $title) {
     Write-Host "`n[STAGE $stageNum/$TotalStages] $title" -ForegroundColor Yellow
@@ -389,6 +389,75 @@ try {
 
     $PassedStages++
     Log-Success "Stage 5 Complete: Mobile voice deep-link & broadcast injection verified.`n"
+
+    # -------------------------------------------------------------
+    # STAGE 6: Workstation App Launch & Teardown (CLOSE_APP) + SSE Strategic Routing (PLAN)
+    # -------------------------------------------------------------
+    Log-Stage 6 "Workstation App Lifecycle (OPEN_APP/CLOSE_APP) & SSE Game-Theoretic Routing (PLAN)"
+
+    # 6.1 Test Launch Application
+    Write-Host "  Launching notepad via OPEN_APP..."
+    $openPayload = @{
+        action = "OPEN_APP"
+        targetNode = "PC-B"
+        application = "notepad"
+    } | ConvertTo-Json
+    $openResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $openPayload -TimeoutSec 10
+    Write-Host "  Launch Response: $($openResp | ConvertTo-Json -Compress)"
+    if (-not $openResp.success) {
+        throw "OPEN_APP failed to launch notepad!"
+    }
+    Start-Sleep -Seconds 1
+    $notepadProc = Get-Process -Name notepad -ErrorAction SilentlyContinue
+    if (-not $notepadProc) {
+        throw "Notepad process was not found running after OPEN_APP!"
+    }
+    Log-Success "OPEN_APP successfully launched notepad (PID: $($notepadProc[0].Id))."
+
+    # 6.2 Test Close Application (Teardown)
+    Write-Host "  Closing notepad via CLOSE_APP..."
+    $closePayload = @{
+        action = "CLOSE_APP"
+        targetNode = "PC-B"
+        application = "notepad"
+    } | ConvertTo-Json
+    $closeResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $closePayload -TimeoutSec 10
+    Write-Host "  Close Response: $($closeResp | ConvertTo-Json -Compress)"
+    if (-not $closeResp.success) {
+        throw "CLOSE_APP failed to terminate notepad!"
+    }
+    Start-Sleep -Seconds 1
+    $notepadProcAfter = Get-Process -Name notepad -ErrorAction SilentlyContinue
+    if ($notepadProcAfter) {
+        throw "Notepad process is still running after CLOSE_APP!"
+    }
+    Log-Success "CLOSE_APP successfully terminated notepad process."
+
+    # 6.3 Test Game-Theoretic Planning (SSE) via Remote-Exec and /api/agent/plan
+    Write-Host "  Testing SSE game-theoretic routing via /api/agent/plan..."
+    $gpuPlan = Invoke-RestMethod -Uri "http://10.84.73.59:5050/api/agent/plan?query=run+ollama+llama3+on+GPU" -Method Get -TimeoutSec 10
+    Write-Host "  GPU Query Route: $($gpuPlan.target_node) (Tier: $($gpuPlan.solver_tier), Utility: $($gpuPlan.expected_utility))"
+    if ($gpuPlan.target_node -ne "PC_A") {
+        throw "Expected GPU query to route to PC_A, got: $($gpuPlan.target_node)"
+    }
+    Log-Success "GPU task routed to PC_A via $($gpuPlan.solver_tier)."
+
+    $desktopPlan = Invoke-RestMethod -Uri "http://10.84.73.59:5050/api/agent/plan?query=open+microsoft+excel" -Method Get -TimeoutSec 10
+    Write-Host "  Desktop Query Route: $($desktopPlan.target_node) (Tier: $($desktopPlan.solver_tier), Utility: $($desktopPlan.expected_utility))"
+    if ($desktopPlan.target_node -ne "PC_B") {
+        throw "Expected Desktop query to route to PC_B, got: $($desktopPlan.target_node)"
+    }
+    Log-Success "Desktop task routed to PC_B via $($desktopPlan.solver_tier)."
+
+    $mobilePlan = Invoke-RestMethod -Uri "http://10.84.73.59:5050/api/agent/plan?query=create+a+note+buy+groceries" -Method Get -TimeoutSec 10
+    Write-Host "  Mobile Query Route: $($mobilePlan.target_node) (Tier: $($mobilePlan.solver_tier), Utility: $($mobilePlan.expected_utility))"
+    if ($mobilePlan.target_node -ne "MOBILE") {
+        throw "Expected Mobile note query to route to MOBILE, got: $($mobilePlan.target_node)"
+    }
+    Log-Success "Mobile note task routed to MOBILE via $($mobilePlan.solver_tier)."
+
+    $PassedStages++
+    Log-Success "Stage 6 Complete: Workstation App Lifecycle & SSE Strategic Routing verified.`n"
 
     # -------------------------------------------------------------
     # SUMMARY

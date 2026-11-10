@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 
@@ -68,6 +69,7 @@ class AivaWakeWordForegroundService : Service() {
     private val MAX_RETRIES = 6
     private val RETRY_DELAY_MS = 250L
 
+    private var wakeLock: PowerManager.WakeLock? = null
     private var isRunning = false
     private var audioRecord: AudioRecord? = null
     private var recordingThread: Thread? = null
@@ -78,6 +80,12 @@ class AivaWakeWordForegroundService : Service() {
         super.onCreate()
         instance = this
         createNotificationChannel()
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (wakeLock == null) {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AIVA:WakeWordBackgroundLock")
+            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24hr safeguard
+        }
 
         detector = TwoStageWakeWordDetector { confidence ->
             onWakeWordDetected(confidence)
@@ -93,6 +101,15 @@ class AivaWakeWordForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+
+        // Acquire low-power partial wake lock to prevent CPU sleep during background monitoring
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (wakeLock == null) {
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AIVA:WakeWordBackgroundLock")
+            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24hr safeguard
+        }
+
         // Guarantee startForeground is called for every startForegroundService invocation
         startForegroundServiceWithNotification(batteryManager.getMode())
 
@@ -276,6 +293,18 @@ class AivaWakeWordForegroundService : Service() {
             setPackage(packageName)
         }
         sendBroadcast(broadcastIntent)
+
+        // If app is in background or screen is locked, bring MainActivity to foreground
+        try {
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+            if (launchIntent != null) {
+                startActivity(launchIntent)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to bring MainActivity to foreground: ${e.message}")
+        }
     }
 
     private fun buildNotification(mode: BatteryMode, isListening: Boolean): Notification {
@@ -321,6 +350,12 @@ class AivaWakeWordForegroundService : Service() {
     override fun onDestroy() {
         stopListening()
         batteryManager.unregister()
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+            wakeLock = null
+        } catch (_: Exception) {}
         if (instance === this) {
             instance = null
         }
