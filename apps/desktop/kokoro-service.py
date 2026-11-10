@@ -412,6 +412,11 @@ def resolve_winget_bin():
         p = os.path.join(local_app_data, "Microsoft", "WindowsApps", "winget.exe")
         if os.path.exists(p):
             return p
+    user_profile = os.environ.get("USERPROFILE", "")
+    if user_profile:
+        p = os.path.join(user_profile, "AppData", "Local", "Microsoft", "WindowsApps", "winget.exe")
+        if os.path.exists(p):
+            return p
     return "winget"
 
 def execute_install_package(package_name, manager="winget", target_node="PC-B"):
@@ -421,27 +426,56 @@ def execute_install_package(package_name, manager="winget", target_node="PC-B"):
     clean = str(package_name).strip().lower()
     pkg_id = WINGET_PACKAGE_MAP.get(clean, str(package_name).strip())
 
+    already_installed_signals = [
+        "already installed",
+        "no available upgrade",
+        "no newer package",
+        "successfully installed",
+        "0x8a15002b",
+        "0x8a150028"
+    ]
+
     if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
         pca_ip = "10.84.73.194"
-        cmd_str = f"winget install --id {pkg_id} -e --silent --accept-source-agreements --accept-package-agreements"
+        cmd_str = f"winget install --id {pkg_id} -e --silent --accept-source-agreements --accept-package-agreements --disable-interactivity"
         winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {cmd_str} }}"'
         try:
             res = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=180)
-            return res.returncode == 0, f"Dispatched package {pkg_id} installation to PC-A."
+            out = (res.stdout or "") + " " + (res.stderr or "")
+            out_lower = out.lower()
+            if res.returncode == 0 or any(s in out_lower for s in already_installed_signals):
+                return True, f"Successfully verified package {pkg_id} on PC-A."
+            return res.returncode == 0, f"Dispatched package {pkg_id} installation to PC-A: {out[-200:].strip()}"
         except Exception as ex:
             return False, f"Failed installing {pkg_id} on PC-A: {str(ex)}"
 
     winget_bin = resolve_winget_bin()
+    # 1. Attempt silent non-interactive installation
     cmd = [
         winget_bin, "install", "--id", pkg_id, "-e",
-        "--silent", "--accept-source-agreements", "--accept-package-agreements"
+        "--silent", "--accept-source-agreements", "--accept-package-agreements",
+        "--disable-interactivity"
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        out = (proc.stdout or "") + (proc.stderr or "")
-        if proc.returncode == 0 or "Successfully installed" in out or "already installed" in out.lower() or "0x8a15002b" in out:
-            return True, f"Successfully installed {package_name}."
-        return False, f"Failed installing {package_name}: {out[-200:].strip()}"
+        out = (proc.stdout or "") + " " + (proc.stderr or "")
+        out_lower = out.lower()
+        
+        if proc.returncode == 0 or any(s in out_lower for s in already_installed_signals):
+            return True, f"Successfully installed {package_name} on PC-B."
+
+        # 2. Elevated PowerShell execution fallback
+        elevated_ps = f'Start-Process "{winget_bin}" -ArgumentList "install --id {pkg_id} -e --silent --accept-source-agreements --accept-package-agreements --disable-interactivity" -Verb RunAs -Wait -PassThru'
+        elevated_run = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", elevated_ps],
+            capture_output=True,
+            text=True,
+            timeout=180
+        )
+        if elevated_run.returncode == 0:
+            return True, f"Successfully installed {package_name} on PC-B via elevated privileges."
+
+        return False, f"Failed installing {package_name}: {out[-200:].strip() if out.strip() else 'Exit code ' + str(proc.returncode)}"
     except Exception as ex:
         return False, f"Installation exception for {package_name}: {str(ex)}"
 

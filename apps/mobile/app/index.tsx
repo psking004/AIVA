@@ -89,8 +89,8 @@ export default function MobileHomeScreen() {
     }
   }, []);
 
-  // Return to DORMANT after idle (2.5s default matching specification)
-  const scheduleDormancy = useCallback((delayMs: number = 2500) => {
+  // Return to DORMANT after idle (collapses HUD, keeps app alive and preserves message reading window)
+  const scheduleDormancy = useCallback((delayMs: number = 3000) => {
     if (dormancyTimerRef.current) {
       clearTimeout(dormancyTimerRef.current);
       dormancyTimerRef.current = null;
@@ -98,11 +98,15 @@ export default function MobileHomeScreen() {
 
     dormancyTimerRef.current = setTimeout(() => {
       if (voiceStateRef.current === 'LISTENING') return;
-      console.log('[AIVA State] Transitioning to DORMANT.');
+      console.log('[AIVA State] Entering DORMANT HUD mode (app remains alive).');
       setPresenceState('DORMANT');
       setVoiceState('DORMANT');
       setFaceState('IDLE');
-      setLastResponseText(null);
+      
+      // Clear message banner only after a generous reading window (6 seconds)
+      setTimeout(() => {
+        setLastResponseText(null);
+      }, 6000);
     }, delayMs);
   }, []);
 
@@ -247,16 +251,20 @@ export default function MobileHomeScreen() {
           return;
         }
 
-        // Native Phone Calls (e.g. "call 9876543210", "dial 123456")
-        const callMatch = clean.match(/^(?:call|dial|phone)\s+([0-9\+\-\s]+)$/i);
+        // Native Phone Calls (e.g. "call 9876543210", "call John", "dial 123456")
+        const callMatch = clean.match(/^(?:call|dial|phone)\s+([0-9\+\-\s]+|[a-zA-Z\s]+)$/i);
         if (callMatch) {
           clearTimeout(watchdog);
-          const targetNumber = callMatch[1].trim();
-          await aivaVoiceService.makePhoneCall(targetNumber);
-          const spoken = `Calling ${targetNumber}.`;
+          const target = callMatch[1].trim();
+          const spoken = `Calling ${target}...`;
           setLastResponseText(spoken);
           await speakResponse(spoken);
-          scheduleDormancy(2500);
+          try {
+            await aivaVoiceService.makePhoneCall(target);
+          } catch (err: any) {
+            console.warn('[AIVA Phone] Call dispatch error:', err?.message || err);
+          }
+          scheduleDormancy(4000);
           return;
         }
 

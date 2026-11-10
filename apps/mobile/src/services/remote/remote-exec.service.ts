@@ -20,6 +20,7 @@ export interface RemoteExecIntent {
   application?: string;
   command?: string;
   text?: string;
+  package?: string;
   query: string;
 }
 
@@ -181,7 +182,38 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 1. Explicit Dictation Mode Toggle ("start typing", "stop typing", "begin dictation", "exit dictation")
+  // PRIORITY 1: PACKAGE INSTALLATION (INSTALL_APP) - Explicit verbs matched before any status or launch checks
+  const installRegex = /^(?:install|download|setup|get|winget|choco)\s+(?:package\s+|app\s+|software\s+)?([a-zA-Z0-9_\-\.]+)(?:\s+(?:on|in|at)\s+(?:pcb|pca|pc\-?b|pc\-?a))?$/i;
+  const installMatch = strippedQuery.match(installRegex) || clean.match(installRegex);
+  if (installMatch) {
+    const pkg = installMatch[1].trim();
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'INSTALL_APP',
+      application: pkg,
+      command: pkg,
+      package: pkg,
+      query: clean,
+    };
+  }
+
+  // PRIORITY 2: WORKSTATION APP TERMINATION (CLOSE_APP)
+  const closeRegex = /^(?:close|kill|exit|terminate|stop|shut\s*down|quit)\s+(?:app\s+|application\s+)?([a-zA-Z0-9\s_.-]+)$/i;
+  const closeMatch = strippedQuery.match(closeRegex) || clean.match(closeRegex);
+  if (closeMatch) {
+    const appToClose = closeMatch[1].trim();
+    return {
+      isRemoteExec: true,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
+      action: 'CLOSE_APP',
+      application: appToClose,
+      command: appToClose,
+      query: clean,
+    };
+  }
+
+  // 3. Explicit Dictation Mode Toggle ("start typing", "stop typing", "begin dictation", "exit dictation")
   if (/^(?:start\s+typing|start\s+dictation|begin\s+typing|begin\s+dictation|enable\s+dictation)$/i.test(strippedQuery)) {
     return {
       isRemoteExec: true,
@@ -201,7 +233,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 2. Explicit Voice Dictation: "type <content>", "dictate <content>", "write line <content>", "add line <content>"
+  // 4. Explicit Voice Dictation: "type <content>", "dictate <content>", "write line <content>", "add line <content>"
   const typeMatch = clean.match(/^(?:type|dictate|insert|write\s+line|add\s+line)\s+(.+)$/i);
   if (typeMatch && typeMatch[1]) {
     const textToType = typeMatch[1].trim();
@@ -224,7 +256,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 2. BOOT OLLAMA
+  // 5. BOOT OLLAMA
   if (/\b(?:boot|start|turn\s*on|activate|run)\s+ollama\b/i.test(strippedQuery) || /\bboot\s+ollama\b/i.test(normalized)) {
     return {
       isRemoteExec: true,
@@ -235,7 +267,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 3. OPEN FILE (e.g. "open test.py in PCA", "open test buy in PCA", "open test.py", "view script.py on PC-B")
+  // 6. OPEN FILE (e.g. "open test.py in PCA", "open test buy in PCA", "open test.py", "view script.py on PC-B")
   const openFileRegex = /\b(?:open|view|edit)\s+([a-z0-9_\-\.\s]+(?:\.py|\.js|\.ts|\.txt|\.ps1|\.json|\.md)?)\b/i;
   const openMatch = strippedQuery.match(openFileRegex);
   if (openMatch && (openMatch[1].includes('.') || openMatch[1].includes('test') || openMatch[1].includes('script') || openMatch[1].includes('file'))) {
@@ -250,7 +282,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 4. CREATE FILE (e.g. "create a Python file called test.py in PCA", "create test buy in PCA")
+  // 7. CREATE FILE (e.g. "create a Python file called test.py in PCA", "create test buy in PCA")
   const fileCreateRegex = /(?:create|make|write|generate|touch)\s+(?:a\s+)?(?:python\s+file|script|file|code)?\s*(?:called|named)?\s*([a-z0-9_\-\.]+)?/i;
   const fileMatch = strippedQuery.match(fileCreateRegex);
   if (fileMatch && (fileMatch[1] || strippedQuery.includes('file') || strippedQuery.includes('script') || strippedQuery.includes('python'))) {
@@ -269,7 +301,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     }
   }
 
-  // 4. GENERAL SCRIPT / TERMINAL EXECUTION
+  // 8. GENERAL SCRIPT / TERMINAL EXECUTION
   if (/^(?:run|execute|eval|exec)\s+(.+)/i.test(strippedQuery)) {
     return {
       isRemoteExec: true,
@@ -280,35 +312,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 5. WORKSTATION APP TERMINATION (CLOSE / KILL / STOP / EXIT)
-  const closeMatch = strippedQuery.match(/^(?:close|kill|exit|stop|terminate|shut down|quit)\s+(?:app\s+|application\s+)?([a-z0-9\s_.-]+)$/i);
-  if (closeMatch) {
-    const appToClose = closeMatch[1].trim();
-    return {
-      isRemoteExec: true,
-      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
-      action: 'CLOSE_APP',
-      application: appToClose,
-      command: appToClose,
-      query: clean,
-    };
-  }
-
-  // 6. PACKAGE INSTALLATION (WINGET / CHOCO)
-  const installMatch = strippedQuery.match(/^(?:install|setup|winget|choco)\s+(?:package\s+|app\s+|software\s+)?([a-z0-9_\-\.]+)$/i);
-  if (installMatch) {
-    const pkg = installMatch[1].trim();
-    return {
-      isRemoteExec: true,
-      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
-      action: 'INSTALL_APP',
-      application: pkg,
-      command: pkg,
-      query: clean,
-    };
-  }
-
-  // 7. APP LAUNCHING ON WORKSTATIONS
+  // 9. APP LAUNCHING ON WORKSTATIONS
   const launchMatch = strippedQuery.match(/^(?:open|launch|start|switch to)\s+([a-z0-9\s_-]+)$/i);
   if (launchMatch && targetNode !== 'MOBILE') {
     return {
@@ -320,7 +324,7 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 7. STRATEGIC PLANNING / GAME THEORY ENGINE (SSE)
+  // 10. STRATEGIC PLANNING / GAME THEORY ENGINE (SSE)
   if (/\b(?:plan|strategy|strategic|game\s+theory|route\s+task|solver\s+tier)\b/i.test(strippedQuery) || /^(?:what\s+node|which\s+node|plan\s+task)\b/i.test(strippedQuery)) {
     return {
       isRemoteExec: true,
@@ -331,11 +335,12 @@ export function detectRemoteExecutionIntent(query: string): RemoteExecIntent {
     };
   }
 
-  // 8. STATUS CHECKS (Strict, avoids swallowing coding/file tasks)
-  if (/\b(?:status|health|ping|check|how\s+is)\b/i.test(strippedQuery) && targetNode !== 'MOBILE') {
+  // 11. PASSIVE NODE STATUS CHECKS (Lowest priority: ensures action verbs are never swallowed as passive pings)
+  if (/^(?:is\s+)?(?:pcb|pca|pc[\s\-]?b|pc[\s\-]?a)\s+(?:online|alive|status|ready)/i.test(normalized) ||
+      (/\b(?:status|health|ping|alive|check|ready|how\s+is)\b/i.test(strippedQuery) && targetNode !== 'MOBILE')) {
     return {
       isRemoteExec: true,
-      targetNode,
+      targetNode: targetNode === 'MOBILE' ? 'PC-B' : targetNode,
       action: 'STATUS',
       query: clean,
     };
@@ -375,10 +380,11 @@ export class RemoteExecService {
           query: intent.query,
           command: intent.command || '',
           text: intent.text || intent.command || '',
+          package: intent.package || intent.application || intent.command || '',
         },
         {
           headers: { 'Content-Type': 'application/json' },
-          timeout: 8000,
+          timeout: 25000,
         }
       );
 

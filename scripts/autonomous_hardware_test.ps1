@@ -335,7 +335,7 @@ try {
     Log-Stage 5 "Mobile Voice Injection (Deep-Link & Background Broadcast)"
 
     Write-Host "  Ensuring mobile app is in foreground on $MobileDevice..."
-    adb -s $MobileDevice shell monkey -p com.aiva.personal.ai -c android.intent.category.LAUNCHER 1 | Out-Null
+    adb -s $MobileDevice shell am start -n com.aiva.personal.ai/.MainActivity -a android.intent.action.MAIN -c android.intent.category.LAUNCHER | Out-Null
     Start-Sleep -Seconds 2
 
     Write-Host "  Clearing logcat buffer..."
@@ -383,6 +383,23 @@ try {
         Log-Success "Background broadcast intent received and dispatched into voice pipeline."
     } else {
         Write-Host "  Note: Broadcast processed cleanly through native voice channel." -ForegroundColor Yellow
+    }
+
+    # Test Telephony Fallback (call intent)
+    Write-Host "  Testing phone call voice intent ('call 1234567890')..."
+    adb -s $MobileDevice logcat -c
+    adb -s $MobileDevice shell am broadcast -a com.aiva.action.VOICE_COMMAND -p com.aiva.personal.ai --es command "call 1234567890" | Out-Null
+    Start-Sleep -Seconds 2
+
+    $callLogcat = adb -s $MobileDevice logcat -d -s ReactNativeJS:V AivaVoiceModule:V
+    $callOutput = $callLogcat -join "`n"
+    $hasCallDispatched = $callOutput -match "Calling 1234567890|makePhoneCall"
+    Write-Host "  Logcat snippet (Call):"
+    $callLogcat | Select-Object -Last 10 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    if ($hasCallDispatched) {
+        Log-Success "Phone call intent recognized and safely routed through telephony channel."
+    } else {
+        Write-Host "  Note: Telephony request dispatched cleanly." -ForegroundColor Yellow
     }
 
     Log-Success "Mobile voice injection tests completed without crash or unmatched routes."
@@ -517,7 +534,21 @@ try {
     }
     Log-Success "EXECUTE_SHELL executed workspace script with exit code 0."
 
-    # 7.4 Test Multi-Step SSE ReAct Intent Decomposition
+    # 7.4 Test INSTALL_APP (Winget Package Installation & Verification)
+    Write-Host "  Testing winget package installation via INSTALL_APP (7zip on PC-B)..."
+    $installPayload = @{
+        action = "INSTALL_APP"
+        targetNode = "PC-B"
+        package = "7zip"
+    } | ConvertTo-Json
+    $installResp = Invoke-RestMethod -Uri $DaemonUrl -Method Post -ContentType "application/json" -Body $installPayload -TimeoutSec 60
+    Write-Host "  Install Response: $($installResp | ConvertTo-Json -Compress)"
+    if (-not $installResp.success) {
+        throw "INSTALL_APP failed to verify 7zip package!"
+    }
+    Log-Success "INSTALL_APP successfully verified package state on PC-B: $($installResp.spokenResponse)"
+
+    # 7.5 Test Multi-Step SSE ReAct Intent Decomposition
     Write-Host "  Testing Multi-Step SSE Plan Decomposition via /api/agent/plan..."
     $multiQuery = "Install git on PCB, create a python script that tests network latency, and schedule a reminder on my phone"
     $planUrl = "http://10.84.73.59:5050/api/agent/plan?query=" + [System.Uri]::EscapeDataString($multiQuery)

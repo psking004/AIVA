@@ -668,18 +668,37 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun makePhoneCall(phoneNumber: String, promise: Promise) {
         try {
-            val cleanNumber = phoneNumber.trim().replace(" ", "").replace("-", "")
+            val cleanNumber = phoneNumber.replace(Regex("[^0-9+]"), "")
+            val uri = Uri.parse("tel:$cleanNumber")
+
             val hasCallPermission = ContextCompat.checkSelfPermission(
                 reactContext,
                 android.Manifest.permission.CALL_PHONE
             ) == PackageManager.PERMISSION_GRANTED
 
-            val intentAction = if (hasCallPermission) Intent.ACTION_CALL else Intent.ACTION_DIAL
-            val callIntent = Intent(intentAction, Uri.parse("tel:$cleanNumber")).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val intent = if (hasCallPermission) {
+                Intent(Intent.ACTION_CALL, uri).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            } else {
+                // Direct safe fallback: Opens system dialer with number pre-dialed (zero runtime permissions needed)
+                Intent(Intent.ACTION_DIAL, uri).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
             }
-            reactContext.startActivity(callIntent)
-            promise.resolve(true)
+
+            val pm = reactContext.packageManager
+            if (intent.resolveActivity(pm) != null) {
+                reactContext.startActivity(intent)
+                promise.resolve(true)
+            } else {
+                // Last resort: launch dialer without URI
+                val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                reactContext.startActivity(dialIntent)
+                promise.resolve(true)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "makePhoneCall error: ${e.message}")
             promise.reject("CALL_FAILED", e.message)
