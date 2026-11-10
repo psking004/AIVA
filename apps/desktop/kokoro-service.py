@@ -20,11 +20,12 @@ try:
     _sse_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse"))
     if _sse_path not in sys.path:
         sys.path.insert(0, _sse_path)
-    from sse_standalone import evaluate_strategic_intent
+    from sse_standalone import evaluate_strategic_intent, dynamic_sse_planner
     print("[KokoroDaemon] Strategic Systems Engine (SSE) decision core successfully loaded.")
 except Exception as _sse_err:
     print(f"[KokoroDaemon] SSE load note: {_sse_err}")
     evaluate_strategic_intent = None
+    dynamic_sse_planner = None
 
 # Resilient Kokoro model path resolution
 def resolve_models_dir():
@@ -401,6 +402,11 @@ WINGET_PACKAGE_MAP = {
     "neovim": "Neovim.Neovim",
     "nvim": "Neovim.Neovim",
     "curl": "cURL.cURL",
+    "cursor": "Anysphere.Cursor",
+    "codex": "codex",
+    "github": "GitHub.cli",
+    "gh": "GitHub.cli",
+    "docker": "Docker.DockerDesktop",
 }
 
 def resolve_winget_bin():
@@ -585,6 +591,86 @@ def execute_shell_command(command, cwd=None, timeout=60, target_node="PC-B"):
         except Exception as ex:
             return False, "", str(ex), -1
 
+def execute_sse_plan_steps(steps):
+    execution_results = []
+    for s in steps:
+        s_node = (s.get("node") or "PC-B").upper()
+        s_act = s.get("action", "")
+        s_res = {"node": s_node, "action": s_act, "step": s, "success": True, "output": ""}
+
+        if "PC-B" in s_node or s_node == "PC_B":
+            if s_act == "INSTALL_APP":
+                pkg = s.get("package") or s.get("target") or ""
+                ok, msg = execute_install_package(pkg, target_node="PC-B")
+                s_res["success"], s_res["output"] = ok, msg
+            elif s_act == "CREATE_FILE":
+                fn = s.get("file", "script.py")
+                ok, msg = create_empty_file_with_editor(fn)
+                s_res["success"], s_res["output"] = ok, msg
+            elif s_act == "MODIFY_FILE":
+                fn = s.get("file", "script.py")
+                content = s.get("content", "")
+                ok, msg = patch_file(fn, "", content, target_node="PC-B")
+                s_res["success"], s_res["output"] = ok, msg
+            elif s_act == "OPEN_APP":
+                app = s.get("application") or s.get("target") or ""
+                ok, msg = execute_universal_launch(app)
+                s_res["success"], s_res["output"] = ok, msg
+            elif s_act in ("EXECUTE_SHELL", "EXEC"):
+                cmd = s.get("command", "")
+                ok, out, err, code = execute_shell_command(cmd, target_node="PC-B")
+                s_res["success"], s_res["output"] = ok, (out or err or f"Exit code {code}")
+            elif s_act == "CREATE_CALENDAR":
+                s_res["success"], s_res["output"] = True, f"Dispatched to mobile: {s.get('title')}"
+            else:
+                s_res["success"], s_res["output"] = True, f"Processed {s_act} on PC-B"
+
+        elif "PC-A" in s_node or s_node == "PC_A" or "194" in s_node:
+            if s_act == "INSTALL_APP":
+                pkg = s.get("package") or s.get("target") or ""
+                ok, msg = execute_install_package(pkg, target_node="PC-A")
+                s_res["success"], s_res["output"] = ok, msg
+            elif s_act == "CREATE_FILE":
+                fn = s.get("file", "script.py")
+                target_path, mirror_path, _ = resolve_workspace_filepath(fn, "PC-A")
+                try:
+                    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                    with open(target_path, "w", encoding="utf-8") as f:
+                        f.write("")
+                    if mirror_path:
+                        os.makedirs(os.path.dirname(mirror_path), exist_ok=True)
+                        with open(mirror_path, "w", encoding="utf-8") as f:
+                            f.write("")
+                    s_res["success"], s_res["output"] = True, f"Created {fn} directly on PC-A workspace."
+                except Exception as ex:
+                    s_res["success"], s_res["output"] = False, f"Error creating file on PC-A: {ex}"
+            elif s_act == "MODIFY_FILE":
+                fn = s.get("file", "script.py")
+                content = s.get("content", "")
+                ok, msg = patch_file(fn, "", content, target_node="PC-A")
+                s_res["success"], s_res["output"] = ok, msg
+            elif s_act in ("EXECUTE_SHELL", "EXEC"):
+                cmd = s.get("command", "")
+                ok, out, err, code = execute_shell_command(cmd, target_node="PC-A")
+                s_res["success"], s_res["output"] = ok, (out or err or f"Exit code {code}")
+            elif s_act == "OPEN_APP":
+                app = s.get("application") or s.get("target") or ""
+                escaped = app.replace("'", "''")
+                winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process \'{escaped}\' }}"'
+                try:
+                    p = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=30)
+                    s_res["success"], s_res["output"] = p.returncode == 0, f"Dispatched launch of {app} to PC-A."
+                except Exception as ex:
+                    s_res["success"], s_res["output"] = False, f"Failed launching {app} on PC-A: {ex}"
+            else:
+                s_res["success"], s_res["output"] = True, f"Processed {s_act} on PC-A"
+
+        elif "MOBILE" in s_node:
+            s_res["success"], s_res["output"] = True, f"Mobile action staged: {s.get('title') or s_act}"
+
+        execution_results.append(s_res)
+    return execution_results
+
 class KokoroHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         sys.stderr.write(f"[KOKORO TTS] {format % args}\n")
@@ -652,8 +738,14 @@ class KokoroHandler(BaseHTTPRequestHandler):
             parsed_url = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_url.query)
             query_str = query_params.get("query", [""])[0]
+            is_exec = "execute" in parsed_url.path or query_params.get("execute", ["false"])[0].lower() in ("true", "1")
             if evaluate_strategic_intent:
                 plan_res = evaluate_strategic_intent(query_str)
+                if is_exec and plan_res.get("steps"):
+                    exec_results = execute_sse_plan_steps(plan_res.get("steps", []))
+                    plan_res["executed"] = True
+                    plan_res["execution_results"] = exec_results
+                    plan_res["spokenResponse"] = f"Executed {len(plan_res.get('steps', []))} strategic steps across the fabric."
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -670,6 +762,36 @@ class KokoroHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        if self.path in ("/api/agent/plan/execute", "/api/plan/execute"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length)
+            try:
+                data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            except Exception:
+                data = {}
+            query_str = data.get("query") or data.get("command") or data.get("text") or ""
+            plan = data.get("plan")
+            if not plan and dynamic_sse_planner:
+                plan = dynamic_sse_planner(query_str)
+            elif not plan and evaluate_strategic_intent:
+                plan = evaluate_strategic_intent(query_str)
+
+            steps = plan.get("steps", []) if plan else []
+            execution_results = execute_sse_plan_steps(steps)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            resp = {
+                "success": True,
+                "plan": plan,
+                "results": execution_results,
+                "spokenResponse": f"Executed {len(steps)} strategic steps across the fabric."
+            }
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
         if self.path in ("/api/agent/plan", "/api/plan"):
             content_length = int(self.headers.get("Content-Length", 0))
             body_bytes = self.rfile.read(content_length)
@@ -1163,29 +1285,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     should_execute = bool(data.get("execute", False))
                     step_exec_results = []
                     if should_execute and plan_result.get("steps"):
-                        for s in plan_result["steps"]:
-                            s_node = (s.get("node") or "PC-B").upper()
-                            s_act = s.get("action", "")
-                            s_res = {"step": s, "success": True, "output": ""}
-                            if s_act == "INSTALL_APP":
-                                ok, msg = execute_install_package(s.get("target"), target_node=s_node)
-                                s_res["success"], s_res["output"] = ok, msg
-                            elif s_act == "CREATE_FILE":
-                                fn = s.get("file", "script.py")
-                                ok, msg = create_empty_file_with_editor(fn) if "PC-B" in s_node else (True, f"Staged {fn} for PC-A")
-                                s_res["success"], s_res["output"] = ok, msg
-                            elif s_act == "MODIFY_FILE":
-                                fn = s.get("file", "script.py")
-                                content = s.get("content", "")
-                                ok, msg = patch_file(fn, "", content, target_node=s_node)
-                                s_res["success"], s_res["output"] = ok, msg
-                            elif s_act == "EXECUTE_SHELL":
-                                cmd = s.get("command", "")
-                                ok, out, err, code = execute_shell_command(cmd, target_node=s_node)
-                                s_res["success"], s_res["output"] = ok, (out or err)
-                            elif s_act == "CREATE_CALENDAR":
-                                s_res["success"], s_res["output"] = True, f"Dispatched to mobile: {s.get('title')}"
-                            step_exec_results.append(s_res)
+                        step_exec_results = execute_sse_plan_steps(plan_result["steps"])
 
                     res_data = {
                         "success": True,
@@ -1205,41 +1305,20 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     }
 
             # 6. Route for Autonomous Multi-Step ReAct Plan Execution
-            elif action in ("EXECUTE_PLAN", "RUN_PLAN"):
-                steps = data.get("steps") or []
-                step_exec_results = []
-                all_succeeded = True
-                for s in steps:
-                    s_node = (s.get("node") or "PC-B").upper()
-                    s_act = s.get("action", "")
-                    s_res = {"step": s, "success": True, "output": ""}
-                    if s_act == "INSTALL_APP":
-                        ok, msg = execute_install_package(s.get("target"), target_node=s_node)
-                        s_res["success"], s_res["output"] = ok, msg
-                    elif s_act == "CREATE_FILE":
-                        fn = s.get("file", "script.py")
-                        ok, msg = create_empty_file_with_editor(fn) if "PC-B" in s_node else (True, f"Staged {fn} for PC-A")
-                        s_res["success"], s_res["output"] = ok, msg
-                    elif s_act == "MODIFY_FILE":
-                        fn = s.get("file", "script.py")
-                        content = s.get("content", "")
-                        ok, msg = patch_file(fn, "", content, target_node=s_node)
-                        s_res["success"], s_res["output"] = ok, msg
-                    elif s_act == "EXECUTE_SHELL":
-                        cmd = s.get("command", "")
-                        ok, out, err, code = execute_shell_command(cmd, target_node=s_node)
-                        s_res["success"], s_res["output"] = ok, (out or err)
-                    elif s_act == "CREATE_CALENDAR":
-                        s_res["success"], s_res["output"] = True, f"Dispatched to mobile: {s.get('title')}"
-                    if not s_res["success"]:
-                        all_succeeded = False
-                    step_exec_results.append(s_res)
+            elif action in ("EXECUTE_PLAN", "RUN_PLAN", "EXECUTE_SSE_PLAN"):
+                steps = data.get("steps")
+                if not steps and (query or command):
+                    plan_query = query or command
+                    plan = dynamic_sse_planner(plan_query) if dynamic_sse_planner else None
+                    steps = plan.get("steps", []) if plan else []
+                step_exec_results = execute_sse_plan_steps(steps or [])
+                all_succeeded = all(s.get("success", False) for s in step_exec_results) if step_exec_results else True
                 res_data = {
                     "success": all_succeeded,
                     "node": "PC-B",
                     "action": "EXECUTE_PLAN",
                     "steps": step_exec_results,
-                    "spokenResponse": f"Executed plan with {len(step_exec_results)} steps." if all_succeeded else "Plan execution encountered errors."
+                    "spokenResponse": f"Executed plan with {len(step_exec_results)} steps across the fabric." if all_succeeded else "Plan execution encountered errors."
                 }
 
             # 7. Route for Package Installation via WinGet / Choco

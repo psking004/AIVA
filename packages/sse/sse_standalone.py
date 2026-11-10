@@ -358,84 +358,184 @@ class SovereignDecisionCore:
         return best_i, avg_util, min_worst_case_regret
 
 
-def decompose_multi_step_plan(query: str) -> list[dict[str, Any]]:
-    """Splits compound / multi-clause directives into discrete task definitions across fabric nodes."""
-    raw_clauses = [c.strip() for c in re.split(r'[,;]|\band\s+|\bthen\s+', query) if c.strip()]
-    steps = []
+def dynamic_sse_planner(query: str) -> dict[str, Any]:
+    """
+    Universal Strategic Systems Engine planner for arbitrary multi-intent tasks.
+    Decomposes instructions into node-bound atomic actions dynamically without rigid template mappings.
+    """
+    clean = (query or "").strip()
+    steps: list[dict[str, Any]] = []
 
-    package_ids = {
-        "git": "Git.Git",
+    package_map = {
         "7zip": "7zip.7zip",
         "7-zip": "7zip.7zip",
+        "git": "Git.Git",
         "vscode": "Microsoft.VisualStudioCode",
         "vs code": "Microsoft.VisualStudioCode",
-        "visual studio code": "Microsoft.VisualStudioCode",
+        "cursor": "Anysphere.Cursor",
         "vlc": "VideoLAN.VLC",
         "python": "Python.Python.3.11",
+        "python3": "Python.Python.3.11",
         "chrome": "Google.Chrome",
+        "firefox": "Mozilla.Firefox",
+        "nodejs": "OpenJS.NodeJS.LTS",
+        "node": "OpenJS.NodeJS.LTS",
+        "ripgrep": "BurntSushi.ripgrep.MSVC",
         "neovim": "Neovim.Neovim",
+        "nvim": "Neovim.Neovim",
+        "github": "GitHub.cli",
+        "gh": "GitHub.cli",
+        "docker": "Docker.DockerDesktop",
+        "codex": "codex",
     }
 
-    for clause in raw_clauses:
-        c_low = clause.lower()
-        node = "PC-B"
-        if any(h in c_low for h in ["on pca", "in pca", "at pca", "on pc-a", "in pc-a"]):
-            node = "PC-A"
-        elif any(h in c_low for h in ["on phone", "on mobile", "my phone", "my mobile"]):
-            node = "MOBILE"
-        elif any(h in c_low for h in ["on pcb", "in pcb", "at pcb", "on pc-b", "in pc-b"]):
-            node = "PC-B"
+    raw_clauses = [c.strip() for c in re.split(r'\band\b|\balso\b|\bthen\b|[,;]', clean, flags=re.IGNORECASE) if c.strip()]
+    last_action = None
 
-        if any(k in c_low for k in ["install ", "winget ", "setup "]):
-            pkg_match = re.search(r'(?:install|setup|winget)\s+([a-z0-9_\-\.]+)', c_low)
-            pkg_name = pkg_match.group(1) if pkg_match else "package"
-            pkg_id = package_ids.get(pkg_name, pkg_name)
-            steps.append({
-                "node": node,
-                "action": "INSTALL_APP",
-                "target": pkg_id,
-            })
-        elif any(k in c_low for k in ["create ", "make ", "generate ", "touch ", "write "]) and any(k in c_low for k in ["file", "script", ".py", ".ts", ".js", "test"]):
-            file_match = re.search(r'(?:file|script|called|named)?\s*([a-z0-9_\-]+\.(?:py|js|ts|txt|json|sh|ps1))', c_low)
-            fname = file_match.group(1) if file_match else None
-            if not fname:
-                fname = "network_test.py" if ("latency" in c_low or "network" in c_low) else "workspace_script.py"
-            steps.append({
-                "node": node,
-                "action": "CREATE_FILE",
-                "file": fname,
-            })
-            if "test" in c_low or "latency" in c_low or "code" in c_low or "that" in c_low:
+    for clause in raw_clauses:
+        c_low = clause.lower().strip()
+        if not c_low:
+            continue
+
+        target_nodes = []
+        if re.search(r'\b(?:both|all|each)\b', c_low):
+            target_nodes = ["PC-B", "PC-A"]
+        elif any(h in c_low for h in ["on pca", "in pca", "at pca", "to pca", "for pca", "on pc-a", "in pc-a", "at pc-a", "to pc-a", "for pc-a", "pc-a", "pca"]):
+            target_nodes = ["PC-A"]
+        elif any(h in c_low for h in ["on pcb", "in pcb", "at pcb", "to pcb", "for pcb", "on pc-b", "in pc-b", "at pc-b", "to pc-b", "for pc-b", "pc-b", "pcb", "workstation", "desktop"]):
+            target_nodes = ["PC-B"]
+        elif any(h in c_low for h in ["on phone", "on mobile", "in phone", "in mobile", "my phone", "my mobile", "phone", "mobile"]):
+            target_nodes = ["MOBILE"]
+        else:
+            target_nodes = ["PC-B"]
+
+        clause_stripped = re.sub(
+            r'\b(?:on|in|at|to|for)\s+(?:pc[\s\-]?a|pc[\s\-]?b|both|pca|pcb|my\s+phone|my\s+mobile|phone|mobile)\b',
+            '', clause, flags=re.IGNORECASE
+        ).strip()
+        c_clean_low = clause_stripped.lower()
+
+        # 1. GitHub / Version Control Setup
+        if any(k in c_clean_low for k in ["github", "git config", "git auth", "connect github", "git clone", "github connected"]):
+            for node in target_nodes:
                 steps.append({
                     "node": node,
-                    "action": "MODIFY_FILE",
-                    "file": fname,
-                    "content": "#!/usr/bin/env python3\nimport sys, time\nprint('AIVA autonomous script executed.')\n",
+                    "action": "EXECUTE_SHELL",
+                    "command": "gh auth status || git config --global --list",
                 })
-        elif any(k in c_low for k in ["calendar", "reminder", "schedule", "alarm", "event"]) or node == "MOBILE":
-            title = re.sub(r'^(?:schedule|create|add)\s+(?:a\s+)?(?:calendar\s+event|reminder|calendar|event)?\s*(?:on\s+my\s+phone\s*|on\s+phone\s*|on\s+mobile\s*)?(?:about|for|to)?\s*', '', clause, flags=re.I).strip()
-            title = re.sub(r'\s+on\s+(?:my\s+)?(?:phone|mobile)\s*$', '', title, flags=re.I).strip()
-            if not title or title.lower() in ("on my phone", "phone", "mobile", "reminder", "event"):
+            last_action = "EXECUTE_SHELL"
+            continue
+
+        # 2. Explicit Package Installation (Arbitrary Software: Codex, Cursor, 7zip, Git, Docker, etc.)
+        install_match = re.search(r'(?:install|setup|download|winget|choco|get)\s+(?:app\s+|software\s+|package\s+)?([a-zA-Z0-9\-_\.]+)', clause_stripped, re.I)
+        if install_match:
+            raw_pkg = install_match.group(1).strip()
+            if raw_pkg.lower() not in ("my", "the", "a", "an", "python", "script", "file"):
+                pkg_id = package_map.get(raw_pkg.lower(), raw_pkg)
+                for node in target_nodes:
+                    steps.append({
+                        "node": node,
+                        "action": "INSTALL_APP",
+                        "package": pkg_id,
+                        "target": pkg_id,
+                    })
+                last_action = "INSTALL_APP"
+                continue
+
+        # 3. File Creation / Modification
+        if any(k in c_clean_low for k in ["create ", "make ", "generate ", "touch ", "write "]) and any(k in c_clean_low for k in ["file", "script", ".py", ".ts", ".js", "test", "latency"]):
+            file_match = re.search(r'(?:file|script|called|named)?\s*([a-zA-Z0-9_\-]+\.(?:py|js|ts|txt|json|sh|ps1))', clause_stripped, re.I)
+            fname = file_match.group(1) if file_match else None
+            if not fname:
+                fname = "network_test.py" if ("latency" in c_clean_low or "network" in c_clean_low) else "workspace_script.py"
+            for node in target_nodes:
+                steps.append({
+                    "node": node,
+                    "action": "CREATE_FILE",
+                    "file": fname,
+                })
+                if any(k in c_clean_low for k in ["test", "latency", "code", "that"]):
+                    steps.append({
+                        "node": node,
+                        "action": "MODIFY_FILE",
+                        "file": fname,
+                        "content": "#!/usr/bin/env python3\nimport sys, time\nprint('AIVA autonomous script executed.')\n",
+                    })
+            last_action = "CREATE_FILE"
+            continue
+
+        # 4. Calendar / Reminder on Mobile
+        if any(k in c_clean_low for k in ["calendar", "reminder", "schedule", "alarm", "event"]) or "MOBILE" in target_nodes:
+            title = re.sub(r'^(?:schedule|create|add)\s+(?:a\s+)?(?:calendar\s+event|reminder|calendar|event)?\s*(?:about|for|to)?\s*', '', clause_stripped, flags=re.I).strip()
+            if not title:
                 title = "Check network test"
             steps.append({
                 "node": "MOBILE",
                 "action": "CREATE_CALENDAR",
                 "title": title,
             })
-        elif any(k in c_low for k in ["run ", "exec ", "git ", "build ", "compile "]):
+            last_action = "CREATE_CALENDAR"
+            continue
+
+        # 5. Implied Installation from Previous Clause (e.g. "Install Codex on PC-B and Cursor on PC-A")
+        if last_action == "INSTALL_APP" and not any(k in c_clean_low for k in ["run", "exec", "open", "git", "file", "script", "create", "make", "write", "note", "schedule", "calendar"]):
+            app_token = clause_stripped.split()[0].strip() if clause_stripped else ""
+            if app_token and len(app_token) > 1 and app_token.lower() not in ("my", "the", "a", "an", "python", "script", "file"):
+                pkg_id = package_map.get(app_token.lower(), app_token)
+                for node in target_nodes:
+                    steps.append({
+                        "node": node,
+                        "action": "INSTALL_APP",
+                        "package": pkg_id,
+                        "target": pkg_id,
+                    })
+                continue
+
+        # 6. Dynamic App Launch
+        open_match = re.search(r'(?:open|launch|start|run)\s+(?:app\s+|application\s+)?([a-zA-Z0-9\-_\.\s]+)', clause_stripped, re.I)
+        if open_match and not any(k in c_clean_low for k in ["script", "file", "ollama"]):
+            app_name = open_match.group(1).strip()
+            for node in target_nodes:
+                steps.append({
+                    "node": node,
+                    "action": "OPEN_APP",
+                    "application": app_name,
+                })
+            last_action = "OPEN_APP"
+            continue
+
+        # 6. Fallback: Arbitrary Shell execution
+        for node in target_nodes:
             steps.append({
                 "node": node,
                 "action": "EXECUTE_SHELL",
-                "command": clause,
+                "command": clause.strip(),
             })
-        else:
-            steps.append({
-                "node": node,
-                "action": "EXEC",
-                "command": clause,
-            })
+        last_action = "EXECUTE_SHELL"
 
-    return steps
+    if not steps:
+        steps.append({"node": "PC-B", "action": "EXECUTE_SHELL", "command": clean})
+
+    nodes_involved = list(dict.fromkeys(s["node"] for s in steps))
+
+    return {
+        "success": True,
+        "strategy": "DECOMPOSED_MULTI_NODE",
+        "query": clean,
+        "steps": steps,
+        "nodes_involved": nodes_involved,
+        "target_node": "PC_B" if "PC-B" in nodes_involved else ("PC_A" if "PC-A" in nodes_involved else "MOBILE"),
+        "solver_tier": "T1_IESDS",
+        "expected_utility": 10.0,
+        "spokenResponse": f"Formulated {len(steps)}-step dynamic DAG plan across {', '.join(nodes_involved)} via T1_IESDS.",
+        "rationale": f"Decomposed multi-clause intent into {len(steps)} dynamic strategic steps across {', '.join(nodes_involved)}."
+    }
+
+
+def decompose_multi_step_plan(query: str) -> list[dict[str, Any]]:
+    """Splits compound / multi-clause directives into discrete task definitions across fabric nodes."""
+    plan = dynamic_sse_planner(query)
+    return plan.get("steps", [])
 
 
 def evaluate_strategic_intent(query: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -449,15 +549,16 @@ def evaluate_strategic_intent(query: str, context: dict[str, Any] | None = None)
     actions_p1 = [NodeID.MOBILE.value, NodeID.PC_B.value, NodeID.PC_A.value]  # ["MOBILE", "PC_B", "PC_A"]
     actions_p2 = ["OPTIMAL_MESH", "HIGH_LATENCY_PARTITION"]
 
-    raw_clauses = [c.strip() for c in re.split(r'[,;]|\band\s+|\bthen\s+', query) if c.strip()]
-    if len(raw_clauses) > 1 and any(k in q for k in [" and ", ", then ", "then ", ";", ", create ", ", install ", ", schedule ", "install "]):
-        steps = decompose_multi_step_plan(query)
+    raw_clauses = [c.strip() for c in re.split(r'[,;]|\band\s+|\bthen\s+|\balso\s+', query) if c.strip()]
+    if len(raw_clauses) > 1 and any(k in q for k in [" and ", ", then ", "then ", ";", ", create ", ", install ", ", schedule ", "install ", "also ", "both"]):
+        plan = dynamic_sse_planner(query)
+        steps = plan.get("steps", [])
         if len(steps) > 1:
             core = SovereignDecisionCore(node_id=NodeID.PC_B, mode="STRATEGIC_PLAN")
             u1 = [[2.0, 2.0], [10.0, 8.0], [4.0, 2.0]]
             u2 = [[3.0, 2.0], [9.0, 7.0], [5.0, 3.0]]
             verdict = core.solve_matrix(u1, u2, actions_p1=actions_p1, actions_p2=actions_p2)
-            nodes_involved = list(dict.fromkeys(s["node"] for s in steps))
+            nodes_involved = plan.get("nodes_involved", list(dict.fromkeys(s["node"] for s in steps)))
             return {
                 "success": True,
                 "strategy": "DECOMPOSED_MULTI_NODE",

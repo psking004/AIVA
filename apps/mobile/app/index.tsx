@@ -251,18 +251,42 @@ export default function MobileHomeScreen() {
           return;
         }
 
-        // Native Phone Calls (e.g. "call 9876543210", "call John", "dial 123456")
-        const callMatch = clean.match(/^(?:call|dial|phone)\s+([0-9\+\-\s]+|[a-zA-Z\s]+)$/i);
+        // Native Phone Calls (e.g. "call 9876543210", "call Amma", "dial John", "phone Dad")
+        const callMatch = clean.match(/^(?:call|dial|phone)\s+(.+)$/i);
         if (callMatch) {
           clearTimeout(watchdog);
           const target = callMatch[1].trim();
-          const spoken = `Calling ${target}...`;
-          setLastResponseText(spoken);
-          await speakResponse(spoken);
           try {
+            const spoken = `Calling ${target}...`;
+            setLastResponseText(spoken);
+            await speakResponse(spoken);
             await aivaVoiceService.makePhoneCall(target);
           } catch (err: any) {
-            console.warn('[AIVA Phone] Call dispatch error:', err?.message || err);
+            const errSpoken = `Could not call ${target}: ${err?.message || 'contact not found'}.`;
+            setLastResponseText(errSpoken);
+            await speakResponse(errSpoken);
+          }
+          scheduleDormancy(4000);
+          return;
+        }
+
+        // Native WhatsApp Messages (e.g. "send WhatsApp message to Amma saying I will be there soon", "WhatsApp John hello", "message Mom on WhatsApp with I am coming")
+        const waMatch = clean.match(/^(?:send\s+)?(?:a\s+)?(?:whatsapp|whatsapp\s+message)\s+(?:to\s+)?(.+?)\s+(?:saying|that|with|:)?\s*(.+)$/i) ||
+                        clean.match(/^(?:send\s+)?(?:message|msg|text)\s+(?:to\s+)?(.+?)\s+(?:on|via)\s+whatsapp\s+(?:saying|that|with|:)?\s*(.+)$/i) ||
+                        clean.match(/^whatsapp\s+(.+?)\s+(?:saying|that|with|:)?\s*(.+)$/i);
+        if (waMatch) {
+          clearTimeout(watchdog);
+          const recipient = waMatch[1].trim();
+          const textMsg = waMatch[2].trim();
+          try {
+            const spoken = `Sending WhatsApp message to ${recipient}...`;
+            setLastResponseText(spoken);
+            await speakResponse(spoken);
+            await aivaVoiceService.sendWhatsAppMessage(recipient, textMsg);
+          } catch (err: any) {
+            const errSpoken = `Could not send WhatsApp message: ${err?.message || 'failed'}.`;
+            setLastResponseText(errSpoken);
+            await speakResponse(errSpoken);
           }
           scheduleDormancy(4000);
           return;

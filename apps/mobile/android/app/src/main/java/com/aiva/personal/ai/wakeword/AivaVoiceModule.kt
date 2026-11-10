@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.CalendarContract
+import android.provider.ContactsContract
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -26,6 +27,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import java.net.URLEncoder
 import java.util.Locale
 
 /**
@@ -665,24 +667,76 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
-    @ReactMethod
-    fun makePhoneCall(phoneNumber: String, promise: Promise) {
-        try {
-            val cleanNumber = phoneNumber.replace(Regex("[^0-9+]"), "")
-            val uri = Uri.parse("tel:$cleanNumber")
+    private fun resolveContactToPhoneNumber(query: String): String? {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) return null
 
+        // If it's already a raw number with digits, return sanitized digits
+        val digitsOnly = cleanQuery.replace(Regex("[^0-9+]"), "")
+        if (digitsOnly.length >= 7) {
+            return digitsOnly
+        }
+
+        val hasContactsPermission = ContextCompat.checkSelfPermission(
+            reactContext,
+            android.Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (!hasContactsPermission) {
+            Log.w(TAG, "resolveContactToPhoneNumber: READ_CONTACTS permission not granted")
+            return if (digitsOnly.isNotEmpty()) digitsOnly else null
+        }
+
+        try {
+            val resolver = reactContext.contentResolver
+            val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+            val projection = arrayOf(
+                ContactsContract.CommonDataKinds.Phone.NUMBER,
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME
+            )
+            val selection = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
+            val selectionArgs = arrayOf("%$cleanQuery%")
+
+            resolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                    if (numberIndex >= 0) {
+                        val num = cursor.getString(numberIndex)
+                        val sanitized = num.replace(Regex("[^0-9+]"), "")
+                        if (sanitized.isNotEmpty()) {
+                            Log.i(TAG, "Resolved contact '$cleanQuery' to phone number: $sanitized")
+                            return sanitized
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error resolving contact '$cleanQuery': ${e.message}")
+        }
+        return if (digitsOnly.isNotEmpty()) digitsOnly else null
+    }
+
+    @ReactMethod
+    fun makePhoneCall(target: String, promise: Promise) {
+        try {
+            val phoneNumber = resolveContactToPhoneNumber(target)
+            if (phoneNumber.isNullOrBlank()) {
+                promise.reject("CONTACT_NOT_FOUND", "Could not find contact '$target' in phonebook.")
+                return
+            }
+
+            val callUri = Uri.parse("tel:$phoneNumber")
             val hasCallPermission = ContextCompat.checkSelfPermission(
                 reactContext,
                 android.Manifest.permission.CALL_PHONE
             ) == PackageManager.PERMISSION_GRANTED
 
             val intent = if (hasCallPermission) {
-                Intent(Intent.ACTION_CALL, uri).apply {
+                Intent(Intent.ACTION_CALL, callUri).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             } else {
-                // Direct safe fallback: Opens system dialer with number pre-dialed (zero runtime permissions needed)
-                Intent(Intent.ACTION_DIAL, uri).apply {
+                Intent(Intent.ACTION_DIAL, callUri).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             }
@@ -690,18 +744,63 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             val pm = reactContext.packageManager
             if (intent.resolveActivity(pm) != null) {
                 reactContext.startActivity(intent)
-                promise.resolve(true)
+                promise.resolve(phoneNumber)
             } else {
-                // Last resort: launch dialer without URI
-                val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                val dialIntent = Intent(Intent.ACTION_DIAL, callUri).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 reactContext.startActivity(dialIntent)
-                promise.resolve(true)
+                promise.resolve(phoneNumber)
             }
         } catch (e: Exception) {
             Log.e(TAG, "makePhoneCall error: ${e.message}")
             promise.reject("CALL_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun sendWhatsAppMessage(target: String, messageText: String, promise: Promise) {
+        try {
+            val phoneNumber = resolveContactToPhoneNumber(target)
+            val encodedMessage = URLEncoder.encode(messageText, "UTF-8")
+
+            val url = if (!phoneNumber.isNullOrBlank()) {
+                val cleanPhone = phoneNumber.replace("+", "")
+                "https://api.whatsapp.com/send?phone=$cleanPhone&text=$encodedMessage"
+            } else {
+                "https://api.whatsapp.com/send?text=$encodedMessage"
+            }
+
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.whatsapp")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            val pm = reactContext.packageManager
+            if (intent.resolveActivity(pm) != null) {
+                reactContext.startActivity(intent)
+                promise.resolve(true)
+            } else {
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, messageText)
+                    setPackage("com.whatsapp")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (sendIntent.resolveActivity(pm) != null) {
+                    reactContext.startActivity(sendIntent)
+                    promise.resolve(true)
+                } else {
+                    val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    reactContext.startActivity(browserIntent)
+                    promise.resolve(true)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "sendWhatsAppMessage error: ${e.message}")
+            promise.reject("WHATSAPP_FAILED", e.message)
         }
     }
 

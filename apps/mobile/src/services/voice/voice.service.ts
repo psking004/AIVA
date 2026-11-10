@@ -415,17 +415,30 @@ class AivaVoiceService {
     return false;
   }
 
-  async makePhoneCall(phoneNumber: string): Promise<boolean> {
+  async makePhoneCall(target: string): Promise<string | boolean> {
     if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.makePhoneCall) {
       try {
-        await AivaVoiceModule.makePhoneCall(phoneNumber);
-        return true;
+        const res = await AivaVoiceModule.makePhoneCall(target);
+        return res || true;
       } catch (err: any) {
-        console.warn(`[AIVA Voice] Failed to make phone call to "${phoneNumber}":`, err?.message);
-        return false;
+        console.warn(`[AIVA Voice] Failed to make phone call to "${target}":`, err?.message);
+        throw err;
       }
     }
-    return false;
+    throw new Error('Telephony not supported on this platform');
+  }
+
+  async sendWhatsAppMessage(target: string, messageText: string): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule && AivaVoiceModule.sendWhatsAppMessage) {
+      try {
+        await AivaVoiceModule.sendWhatsAppMessage(target, messageText);
+        return true;
+      } catch (err: any) {
+        console.warn(`[AIVA Voice] Failed to send WhatsApp message to "${target}":`, err?.message);
+        throw err;
+      }
+    }
+    throw new Error('WhatsApp dispatch not supported on this platform');
   }
 
   async sendSms(phoneNumber: string, messageText: string): Promise<boolean> {
