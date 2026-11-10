@@ -217,20 +217,24 @@ try {
     $secPass = ConvertTo-SecureString $PcaPass -AsPlainText -Force
     $pcaCred = New-Object System.Management.Automation.PSCredential($PcaUser, $secPass)
     $pcaUri = "http://${PcaHost}:${PcaWinRMPort}/wsman"
+    $testFileA = "test_harness_pca.py"
     $pcaWorkspace = "C:\Users\$PcaUser\AIVA_Workspace"
-    $pcaTestFile = "$pcaWorkspace\test_harness_pca.py"
-    $pcaSmbFile = "\\${PcaHost}\C$\AIVA_Workspace\test_harness_pca.py"
-    $pcaStagedMirror = "C:\AIVA_Workspace\pca\test_harness_pca.py"
+    $pcaTestFile = "$pcaWorkspace\$testFileA"
+    $pcaDirectSharePath = "\\${PcaHost}\AIVA_Workspace\$testFileA"
+    $pcaMirrorPath = "C:\AIVA_Workspace\pca\$testFileA"
 
-    if (Test-Path $pcaStagedMirror) {
-        Remove-Item $pcaStagedMirror -Force
+    if (Test-Path $pcaDirectSharePath) {
+        Remove-Item $pcaDirectSharePath -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $pcaMirrorPath) {
+        Remove-Item $pcaMirrorPath -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host "  Triggering CREATE_FILE on PC-A via Daemon ($DaemonUrl)..."
     $pcaCreatePayload = @{
         action = "CREATE_FILE"
         targetNode = "PC-A"
-        filename = "test_harness_pca.py"
+        filename = $testFileA
         language = "python"
         code = ""
     } | ConvertTo-Json
@@ -245,15 +249,19 @@ try {
     Start-Sleep -Seconds 1
 
     Write-Host "  Verifying PC-A remote file presence (SMB share, WinRM, workspace mirror)..."
-    $remoteSharePath = "\\${PcaHost}\AIVA_Workspace\test_harness_pca.py"
-    $adminSharePath = "\\${PcaHost}\C$\AIVA_Workspace\test_harness_pca.py"
-    $stagedMirrorPath = "C:\AIVA_Workspace\pca\test_harness_pca.py"
+    $directShareExists = Test-Path $pcaDirectSharePath -ErrorAction SilentlyContinue
+    $mirrorExists = Test-Path $pcaMirrorPath -ErrorAction SilentlyContinue
 
-    $smbExists = (Test-Path $remoteSharePath -ErrorAction SilentlyContinue) -or (Test-Path $adminSharePath -ErrorAction SilentlyContinue)
-    $mirrorExists = Test-Path $stagedMirrorPath -ErrorAction SilentlyContinue
+    Write-Host "  -> PC-A Physical Network Share Status: $directShareExists"
+    Write-Host "  -> PC-A Local Mirror Status:           $mirrorExists"
 
-    Write-Host "  -> PC-A Physical Network Share Status: $smbExists"
-    Write-Host "  -> PC-A Staged Local Mirror Status:    $mirrorExists"
+    if ($directShareExists) {
+        Log-Success "PC-A Physical Share write verified directly on remote disk."
+    } elseif ($mirrorExists) {
+        Log-Warning "PC-A file found in local mirror only."
+    } else {
+        throw "PC-A file write failed on both remote share and mirror."
+    }
 
     $directWinRMVerified = $false
     try {
@@ -269,14 +277,7 @@ try {
         Write-Host "  WinRM direct probe note: $($_.Exception.Message)" -ForegroundColor Gray
     }
 
-    if ($smbExists) {
-        Log-Success "PC-A physical network SMB share confirmed at $remoteSharePath."
-    }
-    if ($mirrorExists) {
-        Log-Success "PC-A workspace mirror confirmed at $stagedMirrorPath."
-    }
-
-    if ($smbExists -or $mirrorExists -or $directWinRMVerified) {
+    if ($directShareExists -or $mirrorExists -or $directWinRMVerified) {
         Log-Success "PC-A Workspace Verification Successful."
     } else {
         throw "PC-A File Not Found on Remote Share, WinRM, or Mirror!"
@@ -295,8 +296,14 @@ try {
         throw "PC-A TYPE_TEXT failed via daemon!"
     }
 
-    if (Test-Path $pcaStagedMirror) {
-        $stagedContent = Get-Content -Path $pcaStagedMirror -Raw
+    if (Test-Path $pcaDirectSharePath) {
+        $directContent = Get-Content -Path $pcaDirectSharePath -Raw
+        if ($directContent -match "PC-A WinRM verified") {
+            Log-Success "Dictated text verified directly on PC-A physical disk: $directContent"
+        }
+    }
+    if (Test-Path $pcaMirrorPath) {
+        $stagedContent = Get-Content -Path $pcaMirrorPath -Raw
         if ($stagedContent -match "PC-A WinRM verified") {
             Log-Success "Dictated text verified in PC-A workspace mirror: $stagedContent"
         }

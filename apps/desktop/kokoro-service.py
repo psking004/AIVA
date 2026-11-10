@@ -263,77 +263,51 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
                 if target_node == "PC-A":
                     pca_share = r"\\10.84.73.194\AIVA_Workspace"
-                    pca_local_mirror = r"C:\AIVA_Workspace\pca"
-                    workspace_dir = r"C:\AIVA_Workspace"
-                    os.makedirs(pca_local_mirror, exist_ok=True)
-                    os.makedirs(workspace_dir, exist_ok=True)
+                    remote_target_path = os.path.join(pca_share, file_name)
+                    local_mirror_path = os.path.join(r"C:\AIVA_Workspace\pca", file_name)
 
-                    # 1. Guarantee local staging of blank file on host immediately
+                    os.makedirs(r"C:\AIVA_Workspace\pca", exist_ok=True)
+                    os.makedirs(r"C:\AIVA_Workspace", exist_ok=True)
+
                     try:
-                        with open(os.path.join(workspace_dir, file_name), "w", encoding="utf-8") as f:
+                        # 1. Write blank file directly to PC-A over verified SMB share
+                        with open(remote_target_path, "w", encoding="utf-8") as f:
                             f.write("")
-                        with open(os.path.join(pca_local_mirror, file_name), "w", encoding="utf-8") as f:
+
+                        # 2. Update local PC-B mirror
+                        with open(local_mirror_path, "w", encoding="utf-8") as f:
                             f.write("")
-                    except Exception as le:
-                        sys.stderr.write(f"[CREATE_FILE] Local staging error: {le}\n")
-
-                    # 2. Non-blocking asynchronous SMB share and WinRM creation attempts
-                    def ensure_pca_connection():
                         try:
-                            proc = subprocess.run("net use", shell=True, capture_output=True, text=True, timeout=3)
-                            if "10.84.73.194" in proc.stdout:
-                                return True
-                            cmd = r"net use \\10.84.73.194\C$ /user:alpha AivaWinRM2025!"
-                            p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
-                            if p.returncode == 0:
-                                return True
-                            cmd2 = r"net use \\10.84.73.194\AIVA_Workspace"
-                            p2 = subprocess.run(cmd2, shell=True, capture_output=True, text=True, timeout=5)
-                            return p2.returncode == 0
-                        except Exception:
-                            return False
-
-                    def async_pca_create(f_name):
-                        ensure_pca_connection()
-                        # Attempt writing across the direct physical network share: \\10.84.73.194\AIVA_Workspace
-                        try:
-                            remote_target_path = os.path.join(pca_share, f_name)
-                            with open(remote_target_path, "w", encoding="utf-8") as f:
+                            with open(os.path.join(r"C:\AIVA_Workspace", file_name), "w", encoding="utf-8") as f:
                                 f.write("")
-                            sys.stderr.write(f"[CREATE_FILE] Successfully created file via SMB share: {remote_target_path}\n")
-                            return
-                        except Exception as smb_err:
-                            sys.stderr.write(f"[CREATE_FILE] SMB share write note: {smb_err}\n")
-
-                        # Fallback 1: Admin share
-                        try:
-                            admin_share = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
-                            os.makedirs(os.path.dirname(admin_share), exist_ok=True)
-                            with open(admin_share, "w", encoding="utf-8") as af:
-                                af.write("")
-                            sys.stderr.write(f"[CREATE_FILE] Successfully created file via admin SMB: {admin_share}\n")
-                            return
-                        except Exception as adm_err:
-                            sys.stderr.write(f"[CREATE_FILE] Admin SMB write note: {adm_err}\n")
-
-                        # Fallback 2: WinRM command
-                        try:
-                            remote_cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ [System.IO.File]::WriteAllText('C:\\AIVA_Workspace\\{f_name}', '') }}\""
-                            subprocess.run(remote_cmd, shell=True, timeout=8)
                         except Exception:
                             pass
 
-                    import threading
-                    threading.Thread(target=async_pca_create, args=(file_name,), daemon=True).start()
+                        ACTIVE_SESSION["node"] = "PC-A"
+                        ACTIVE_SESSION["active_file"] = file_name
 
-                    # Open local editor mirror for immediate user interaction
-                    subprocess.Popen(f'notepad.exe "{os.path.join(workspace_dir, file_name)}"', shell=True)
-                    res_data = {
-                        "success": True,
-                        "node": "PC-A",
-                        "file": file_name,
-                        "spokenResponse": f"Created {file_name} on PC-A."
-                    }
+                        # 3. Non-blocking WinRM attempt to open editor on PC-A
+                        winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process notepad.exe \\"C:\\AIVA_Workspace\\{file_name}\\" }}"'
+                        subprocess.Popen(winrm_cmd, shell=True)
+
+                        res_data = {
+                            "success": True,
+                            "node": "PC-A",
+                            "file": file_name,
+                            "spokenResponse": f"Created blank file {file_name} directly on PC-A."
+                        }
+                    except Exception as ex:
+                        sys.stderr.write(f"[CREATE_FILE] Error writing to PC-A share: {ex}\n")
+                        try:
+                            with open(local_mirror_path, "w", encoding="utf-8") as f:
+                                f.write("")
+                        except Exception:
+                            pass
+                        res_data = {
+                            "success": False,
+                            "node": "PC-A",
+                            "spokenResponse": f"Failed to write to PC-A share: {str(ex)}"
+                        }
                 else:
                     # PC-B Local Execution (Pure Blank File + Auto-Launch)
                     workspace_dir = r"C:\AIVA_Workspace"
@@ -406,39 +380,37 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     res_data = {"success": True, "node": target_node, "file": file_name, "spokenResponse": "Dictation stopped."}
                 else:
                     if target_node == "PC-A":
-                        # 1. Asynchronous SMB append attempt
-                        def async_pca_append(f_name, txt):
-                            ensure_pca_connection()
-                            try:
-                                smb_path = os.path.join(r"\\10.84.73.194\AIVA_Workspace", f_name)
-                                with open(smb_path, "a", encoding="utf-8") as sf:
-                                    sf.write(txt + "\n")
-                                return
-                            except Exception:
-                                pass
-                            try:
-                                smb_path = os.path.join(r"\\10.84.73.194\C$\AIVA_Workspace", f_name)
-                                with open(smb_path, "a", encoding="utf-8") as sf:
-                                    sf.write(txt + "\n")
-                            except Exception:
-                                pass
-                        import threading
-                        threading.Thread(target=async_pca_append, args=(file_name, text_to_type), daemon=True).start()
+                        pca_share = r"\\10.84.73.194\AIVA_Workspace"
+                        remote_target_path = os.path.join(pca_share, file_name)
+                        local_mirror_path = os.path.join(r"C:\AIVA_Workspace\pca", file_name)
+                        os.makedirs(r"C:\AIVA_Workspace\pca", exist_ok=True)
 
-                        # 2. Local mirror append
                         try:
-                            with open(f"C:\\AIVA_Workspace\\{file_name}", "a", encoding="utf-8") as f:
-                                f.write(text_to_type + "\n")
-                            with open(f"C:\\AIVA_Workspace\\pca\\{file_name}", "a", encoding="utf-8") as f:
-                                f.write(text_to_type + "\n")
-                        except Exception:
-                            pass
-                        res_data = {
-                            "success": True,
-                            "node": "PC-A",
-                            "file": file_name,
-                            "spokenResponse": "Typed."
-                        }
+                            # 1. Append directly to PC-A disk over SMB share
+                            with open(remote_target_path, "a", encoding="utf-8") as f:
+                                f.write(str(text_to_type) + "\n")
+
+                            # 2. Mirror append locally on PC-B
+                            with open(local_mirror_path, "a", encoding="utf-8") as f:
+                                f.write(str(text_to_type) + "\n")
+                            try:
+                                with open(os.path.join(r"C:\AIVA_Workspace", file_name), "a", encoding="utf-8") as f:
+                                    f.write(str(text_to_type) + "\n")
+                            except Exception:
+                                pass
+
+                            res_data = {
+                                "success": True,
+                                "node": "PC-A",
+                                "spokenResponse": "Typed."
+                            }
+                        except Exception as ex:
+                            sys.stderr.write(f"[TYPE_TEXT] Failed typing to PC-A: {ex}\n")
+                            res_data = {
+                                "success": False,
+                                "node": "PC-A",
+                                "spokenResponse": f"Failed typing to PC-A: {str(ex)}"
+                            }
                     else:
                         local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
                         try:
