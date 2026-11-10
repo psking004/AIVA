@@ -12,7 +12,9 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 
@@ -49,7 +51,10 @@ class AivaWakeWordForegroundService : Service() {
         fun resumeListening() {
             val s = instance
             if (s != null && s.batteryManager.getMode() != BatteryMode.ULTRA_LOW_POWER) {
-                s.startListening()
+                s.serviceHandler.post {
+                    s.retryCount = 0
+                    s.startListening()
+                }
             }
         }
 
@@ -57,6 +62,11 @@ class AivaWakeWordForegroundService : Service() {
             instance?.detector?.resetDebounce()
         }
     }
+
+    private val serviceHandler = Handler(Looper.getMainLooper())
+    private var retryCount = 0
+    private val MAX_RETRIES = 6
+    private val RETRY_DELAY_MS = 250L
 
     private var isRunning = false
     private var audioRecord: AudioRecord? = null
@@ -152,10 +162,12 @@ class AivaWakeWordForegroundService : Service() {
         }
     }
 
+    @Synchronized
     private fun startListening() {
-        if (isRunning) return
-        isRunning = true
-        detector.reset()
+        if (isRunning && audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+            return
+        }
+        stopListening()
 
         val bufferSize = AudioRecord.getMinBufferSize(
             TwoStageWakeWordDetector.SAMPLE_RATE,
@@ -173,25 +185,42 @@ class AivaWakeWordForegroundService : Service() {
             )
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioRecord initialization failed")
-                isRunning = false
+                Log.w(TAG, "AudioRecord initialization failed (state != INITIALIZED). Scheduling retry ($retryCount/$MAX_RETRIES)")
+                scheduleRetry()
                 return
             }
 
             audioRecord?.startRecording()
+            if (audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                Log.w(TAG, "AudioRecord startRecording failed. Scheduling retry ($retryCount/$MAX_RETRIES)")
+                scheduleRetry()
+                return
+            }
+
+            isRunning = true
+            retryCount = 0
 
             recordingThread = Thread({
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
                 val audioBuffer = ShortArray(TwoStageWakeWordDetector.FRAME_SIZE)
 
                 while (isRunning) {
-                    val readCount = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: 0
+                    val ar = audioRecord ?: break
+                    val readCount = ar.read(audioBuffer, 0, audioBuffer.size)
                     if (readCount > 0) {
                         detector.processFrame(audioBuffer, readCount)
+                    } else if (readCount < 0) {
+                        Log.w(TAG, "AudioRecord read returned error code: $readCount")
+                        break
                     }
+                }
+                if (isRunning) {
+                    Log.w(TAG, "Recording loop exited unexpectedly while isRunning=true. Scheduling restart...")
+                    serviceHandler.post { scheduleRetry() }
                 }
             }, "AivaWakeWordAudioThread")
 
-            recordingThread?.priority = Thread.NORM_PRIORITY
+            recordingThread?.priority = Thread.MAX_PRIORITY
             recordingThread?.start()
             Log.i(TAG, "AIVA wake-word listening loop active")
 
@@ -199,8 +228,29 @@ class AivaWakeWordForegroundService : Service() {
             Log.e(TAG, "Microphone permission missing for wake-word service: ${e.message}")
             isRunning = false
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting AudioRecord: ${e.message}")
-            isRunning = false
+            Log.e(TAG, "Error starting AudioRecord: ${e.message}. Scheduling retry...")
+            scheduleRetry()
+        }
+    }
+
+    private fun scheduleRetry() {
+        isRunning = false
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (_: Exception) {}
+        audioRecord = null
+
+        if (retryCount < MAX_RETRIES) {
+            retryCount++
+            serviceHandler.postDelayed({
+                if (batteryManager.getMode() != BatteryMode.ULTRA_LOW_POWER) {
+                    startListening()
+                }
+            }, RETRY_DELAY_MS)
+        } else {
+            Log.w(TAG, "Max AudioRecord retry limit reached ($MAX_RETRIES). Will resume on next cycle.")
+            retryCount = 0
         }
     }
 

@@ -187,6 +187,26 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    private fun releaseSpeechRecognizer(onReleased: (() -> Unit)? = null) {
+        mainHandler.post {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error destroying speechRecognizer: ${e.message}")
+            }
+            speechRecognizer = null
+            isListening = false
+
+            // Delay resuming wake-word service by 200ms to allow Android Audio HAL
+            // to completely release the microphone resource before AudioRecord binds.
+            mainHandler.postDelayed({
+                resumeWakeWordService()
+                onReleased?.invoke()
+            }, 200L)
+        }
+    }
+
     @ReactMethod
     fun startListening(language: String?, promise: Promise) {
         val hasPermission = ContextCompat.checkSelfPermission(
@@ -284,7 +304,6 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
                 override fun onError(error: Int) {
                     isListening = false
-                    resumeWakeWordService()
 
                     val errorMsg = when (error) {
                         SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
@@ -307,19 +326,11 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                     sendEvent("onSpeechError", params)
                     sendEvent("onSpeechEnd", Arguments.createMap())
 
-                    mainHandler.post {
-                        try {
-                            speechRecognizer?.destroy()
-                            speechRecognizer = null
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Error destroying speechRecognizer on error: ${e.message}")
-                        }
-                    }
+                    releaseSpeechRecognizer()
                 }
 
                 override fun onResults(results: Bundle?) {
                     isListening = false
-                    resumeWakeWordService()
 
                     val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val text = matches?.firstOrNull() ?: ""
@@ -342,14 +353,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                     sendEvent("onSpeechResult", resultsMapSingular)
                     sendEvent("onSpeechEnd", Arguments.createMap())
 
-                    mainHandler.post {
-                        try {
-                            speechRecognizer?.destroy()
-                            speechRecognizer = null
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Error destroying speechRecognizer on results: ${e.message}")
-                        }
-                    }
+                    releaseSpeechRecognizer()
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
@@ -401,31 +405,15 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun stopListening(promise: Promise) {
-        mainHandler.post {
-            try {
-                speechRecognizer?.stopListening()
-                isListening = false
-                resumeWakeWordService()
-                promise.resolve(true)
-            } catch (e: Exception) {
-                promise.reject("STOP_ERROR", "Failed to stop listening: ${e.message}")
-            }
+        releaseSpeechRecognizer {
+            promise.resolve(true)
         }
     }
 
     @ReactMethod
     fun cancelListening(promise: Promise) {
-        mainHandler.post {
-            try {
-                speechRecognizer?.cancel()
-                speechRecognizer?.destroy()
-                speechRecognizer = null
-                isListening = false
-                resumeWakeWordService()
-                promise.resolve(true)
-            } catch (e: Exception) {
-                promise.reject("CANCEL_ERROR", "Failed to cancel listening: ${e.message}")
-            }
+        releaseSpeechRecognizer {
+            promise.resolve(true)
         }
     }
 

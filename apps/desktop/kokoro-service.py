@@ -72,35 +72,83 @@ def init_engine():
         sys.stderr.write(f"[KOKORO TTS] Initialization error: {e}\n")
         return False
 
+import webbrowser
+import subprocess
+
+# Registry of supported applications and web services
+APP_REGISTRY = {
+    "chatgpt": "https://chatgpt.com",
+    "browser": "https://www.google.com",
+    "google": "https://www.google.com",
+    "chrome": "chrome",
+    "notepad": "notepad.exe",
+    "notes": "notepad.exe",
+    "calculator": "calc.exe",
+    "calc": "calc.exe",
+    "terminal": "wt.exe",
+    "powershell": "powershell.exe",
+    "cursor": "cursor",
+    "vscode": "code",
+    "vs code": "code",
+    "code": "code",
+    "explorer": "explorer.exe",
+    "files": "explorer.exe",
+    "spotify": "spotify",
+    "discord": "discord",
+    "youtube": "https://www.youtube.com",
+    "github": "https://github.com",
+}
+
+def execute_app_launch(app_name):
+    import shutil
+    clean_name = str(app_name).lower().strip()
+    for prefix in ("open ", "launch ", "start ", "switch to "):
+        if clean_name.startswith(prefix):
+            clean_name = clean_name[len(prefix):].strip()
+
+    for suffix in (" in pcb", " on pcb", " at pcb", " in pca", " on pca", " at pca"):
+        if clean_name.endswith(suffix):
+            clean_name = clean_name[:-len(suffix)].strip()
+
+    target_cmd = APP_REGISTRY.get(clean_name, None)
+
+    # 1. If it's a known URL or web app
+    if target_cmd and target_cmd.startswith("http"):
+        try:
+            webbrowser.open(target_cmd)
+            return True, f"Opened {clean_name} in default browser."
+        except Exception as ex:
+            return False, f"Failed to open browser: {str(ex)}"
+
+    # 2. If it's a registered binary or URI protocol
+    if target_cmd:
+        try:
+            subprocess.Popen(target_cmd, shell=True)
+            return True, f"Opened {clean_name} on PC-B."
+        except Exception:
+            pass
+
+    # 3. Dynamic search: check if it's an executable in PATH
+    bin_path = shutil.which(clean_name) or shutil.which(f"{clean_name}.exe")
+    if bin_path:
+        try:
+            subprocess.Popen(f'"{bin_path}"', shell=True)
+            return True, f"Opened {clean_name} on PC-B."
+        except Exception:
+            pass
+
+    # 4. Check if it's a registered URI scheme or protocol association (e.g. spotify:, calc:)
+    try:
+        os.startfile(clean_name if clean_name.startswith("http") else f"{clean_name}:")
+        return True, f"Opened {clean_name} on PC-B."
+    except Exception:
+        pass
+
+    return False, f"Could not launch {clean_name}: application or protocol not found."
+
 def resolve_desktop_app_command(app_name):
     clean = app_name.lower().strip()
-    mapping = {
-        "vs code": "code",
-        "vscode": "code",
-        "code": "code",
-        "chrome": "chrome",
-        "google chrome": "chrome",
-        "browser": "chrome",
-        "terminal": "wt",
-        "powershell": "powershell",
-        "cmd": "cmd",
-        "blender": "blender",
-        "notepad": "notepad",
-        "notes": "notepad",
-        "note": "notepad",
-        "memo": "notepad",
-        "explorer": "explorer",
-        "files": "explorer",
-        "spotify": "spotify",
-        "edge": "msedge",
-        "calculator": "calc",
-        "calc": "calc",
-        "excel": "excel",
-        "microsoft excel": "excel",
-        "whatsapp": "whatsapp",
-        "ollama": "ollama"
-    }
-    return mapping.get(clean, clean)
+    return APP_REGISTRY.get(clean, clean)
 
 class KokoroHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -558,13 +606,14 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         res_data = {"success": False, "node": "PC-A", "status": "OFFLINE_STANDBY", "spokenResponse": spoken}
                 else:
                     # Launch on PC-B
-                    import subprocess
-                    try:
-                        subprocess.Popen(f"start {app_target}", shell=True)
-                        spoken = f"Opening {application or app_target} on PC-B host workstation."
-                        res_data = {"success": True, "node": "PC-B", "application": app_target, "spokenResponse": spoken}
-                    except Exception as e:
-                        res_data = {"success": False, "node": "PC-B", "error": str(e), "spokenResponse": f"Failed to launch {app_target} on PC-B: {str(e)}"}
+                    target_app = application or app_target or command or query
+                    success, spoken = execute_app_launch(target_app)
+                    res_data = {
+                        "success": success,
+                        "node": "PC-B",
+                        "application": target_app,
+                        "spokenResponse": spoken
+                    }
             # Route for PC-A target
             elif "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():
                 import socket

@@ -21,8 +21,8 @@ class TwoStageWakeWordDetector(
         private const val TAG = "TwoStageWakeWord"
         const val SAMPLE_RATE = 16000
         const val FRAME_SIZE = 512 // 32ms frames at 16kHz
-        private const val VAD_ENERGY_THRESHOLD = 350.0 // Minimum RMS energy to pass Stage 1
-        private const val WAKE_CONFIDENCE_THRESHOLD = 0.72f
+        private const val VAD_ENERGY_THRESHOLD = 250.0 // Minimum RMS energy to pass Stage 1
+        private const val WAKE_CONFIDENCE_THRESHOLD = 0.68f
     }
 
     private var sensitivity: Float = 0.75f
@@ -119,8 +119,8 @@ class TwoStageWakeWordDetector(
         // Keyword spectral signature matching for phonemes in "AIVA"
         // Require meaningful dynamic range (crest factor) rather than flat background noise
         val crestFactor = if (avgAmplitude > 0) maxAmplitude / avgAmplitude else 0.0
-        val zcrMatch = (zcr in 0.09f..0.26f)
-        val amplitudeMatch = (avgAmplitude in 1200.0..18000.0) && (crestFactor > 2.2)
+        val zcrMatch = (zcr in 0.07f..0.30f)
+        val amplitudeMatch = (avgAmplitude in 450.0..25000.0) && (crestFactor > 1.8)
 
         if (zcrMatch && amplitudeMatch) {
             val normalizedScore = (0.76 + (avgAmplitude / 25000.0).coerceAtMost(0.20)).toFloat()
