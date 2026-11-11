@@ -95,6 +95,10 @@ export default function MobileHomeScreen() {
   // Language session flag: default false guarantees 100% English greetings on cold start
   const userSpokeTamilRef = useRef<boolean>(false);
 
+  // Inactivity tracking for stale wake briefing engine (> 30 minutes threshold)
+  const lastInteractionTimeRef = useRef<number>(Date.now());
+  const STALE_INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000;
+
   const dormancyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeOverlayRef = useRef<AivaOverlayLens>(null);
@@ -104,6 +108,35 @@ export default function MobileHomeScreen() {
   const lastProcessedCommandRef = useRef<{ text: string; timestamp: number }>({ text: '', timestamp: 0 });
   const speakingStartTimeRef = useRef<number>(0);
   const speakingEndTimeRef = useRef<number>(0);
+
+  const generateFabricBriefing = useCallback(async (): Promise<string> => {
+    let notifSummary = 'no unread messages';
+    try {
+      const notif = await aivaVoiceService.getUnreadNotifications();
+      if (notif && notif.count > 0) {
+        notifSummary = notif.summary;
+      }
+    } catch (_err) {}
+
+    let weather = '30°C and partly cloudy';
+    let pcbProcesses = 'core services';
+    let pcaStatus = 'online and ready';
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const resp = await fetch('http://10.84.73.59:5050/api/fabric/briefing', { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.weather) weather = data.weather;
+        if (data.pcb_processes) pcbProcesses = data.pcb_processes;
+        if (data.pca_status) pcaStatus = data.pca_status;
+      }
+    } catch (_err) {}
+
+    return `Welcome back! Outside it's ${weather} in Chennai. You have ${notifSummary}. PC-B is holding steady with ${pcbProcesses}, and PC-A compute node is ${pcaStatus}. All systems are green — what are we building today?`;
+  }, []);
 
   useEffect(() => {
     activeOverlayRef.current = activeOverlay;
@@ -262,6 +295,7 @@ export default function MobileHomeScreen() {
 
       isProcessingRef.current = true;
       lastProcessedCommandRef.current = { text: clean, timestamp: now };
+      lastInteractionTimeRef.current = now;
       console.log('[EVIDENCE-5] Transcript is submitted exactly once:', clean);
 
       clearTimers();
@@ -294,6 +328,16 @@ export default function MobileHomeScreen() {
           setActiveOverlay(parsed.targetOverlay);
           clearTimeout(watchdog);
           await speakResponse(parsed.spokenResponse || `Opening ${parsed.targetOverlay}.`);
+          return;
+        }
+
+        // Tri-Node Briefing Direct Intent (e.g. "briefing", "give me a briefing", "what's the system status")
+        if (/\b(?:briefing|status update|system status|daily brief)\b/i.test(clean)) {
+          clearTimeout(watchdog);
+          const briefing = await generateFabricBriefing();
+          setLastResponseText(briefing);
+          await speakResponse(briefing);
+          scheduleDormancy(4000);
           return;
         }
 
@@ -643,13 +687,25 @@ export default function MobileHomeScreen() {
       setPresenceState('ACTIVE');
       setLastResponseText(null);
 
-      // Select language-gated greeting
-      const wakeAck = getRandomWakeAck(userSpokeTamilRef.current);
-      console.log(`[AIVA Wake] Acknowledgment selected (${userSpokeTamilRef.current ? 'Multilingual' : 'English-Only'}): "${wakeAck}"`);
-      setLastResponseText(wakeAck);
+      const now = Date.now();
+      const timeSinceLastInteraction = now - lastInteractionTimeRef.current;
+      const isStaleWake = timeSinceLastInteraction >= STALE_INACTIVITY_THRESHOLD_MS;
+      lastInteractionTimeRef.current = now;
+
+      let wakeGreeting: string;
+      if (isStaleWake) {
+        console.log(`[AIVA Wake] Stale wake detected (${Math.round(timeSinceLastInteraction / 60000)} mins inactive). Synthesizing fabric briefing...`);
+        wakeGreeting = await generateFabricBriefing();
+      } else {
+        // Select language-gated greeting
+        wakeGreeting = getRandomWakeAck(userSpokeTamilRef.current);
+        console.log(`[AIVA Wake] Acknowledgment selected (${userSpokeTamilRef.current ? 'Multilingual' : 'English-Only'}): "${wakeGreeting}"`);
+      }
+
+      setLastResponseText(wakeGreeting);
 
       try {
-        await speakResponse(wakeAck);
+        await speakResponse(wakeGreeting);
       } catch (err) {
         console.warn('[AIVA Wake] Speak acknowledgment error:', err);
       }
@@ -662,7 +718,7 @@ export default function MobileHomeScreen() {
         console.warn('[AIVA Voice] startListening error:', e.message);
       }
     },
-    [clearTimers, scheduleDormancy]
+    [clearTimers, scheduleDormancy, generateFabricBriefing, speakResponse]
   );
 
   // Sync native voice service events
@@ -793,6 +849,7 @@ export default function MobileHomeScreen() {
     const text = textInput.trim();
     if (!text || isSending) return;
 
+    lastInteractionTimeRef.current = Date.now();
     setIsSending(true);
     setTextInput('');
     textInputRef.current = '';
@@ -840,15 +897,8 @@ export default function MobileHomeScreen() {
         </View>
       ) : null}
 
-      {/* 4. Bottom Controls: Minimal Dormant Hint OR Typing Fallback */}
-      {isDormant ? (
-        <TouchableOpacity
-          onPress={() => wakeAivaPresence(true)}
-          style={styles.dormantTouchHint}
-        >
-          <Text style={styles.touchHintText}>Say "AIVA" or tap to wake</Text>
-        </TouchableOpacity>
-      ) : showTypingFallback ? (
+      {/* 4. Bottom Controls: Edge-to-edge holographic particle presentation with optional typing fallback */}
+      {showTypingFallback ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.composerBar}
@@ -877,7 +927,7 @@ export default function MobileHomeScreen() {
             <Text style={styles.composerCloseText}>✕</Text>
           </TouchableOpacity>
         </KeyboardAvoidingView>
-      ) : (
+      ) : !isDormant ? (
         <View style={styles.activeBottomBar}>
           <TouchableOpacity
             onPress={() => setShowTypingFallback(true)}
@@ -886,7 +936,7 @@ export default function MobileHomeScreen() {
             <Text style={styles.keyboardToggleIcon}>⌨️</Text>
           </TouchableOpacity>
         </View>
-      )}
+      ) : null}
 
       {/* 5. Contextual UI Sheet (Summoned on voice demand) */}
       <ContextualSheet
@@ -966,15 +1016,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     fontWeight: '400',
-  },
-  dormantTouchHint: {
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
-  touchHintText: {
-    color: '#475569',
-    fontSize: 12,
-    letterSpacing: 0.5,
   },
   activeBottomBar: {
     flexDirection: 'row',

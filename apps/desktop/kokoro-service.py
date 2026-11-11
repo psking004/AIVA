@@ -12,6 +12,8 @@ import json
 import re
 import shutil
 import fnmatch
+import threading
+import urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import soundfile as sf
 
@@ -52,6 +54,8 @@ VOICES_PATH = os.path.join(MODELS_DIR, "voices.bin")
 
 kokoro_engine = None
 aiva_voice_vector = None
+DEFAULT_VOICE = "af_bella"
+DEFAULT_SPEED = 1.05
 
 # Active open file tracking for voice dictation
 ACTIVE_SESSION = {
@@ -71,17 +75,18 @@ def init_engine():
         sys.stderr.write("[KOKORO TTS] Loading Kokoro-82M ONNX model into memory...\n")
         t0 = time.time()
         kokoro_engine = Kokoro(MODEL_PATH, VOICES_PATH)
-        if "af_heart" in kokoro_engine.voices:
+        if "af_bella" in kokoro_engine.voices:
+            aiva_voice_vector = kokoro_engine.voices["af_bella"]
+            sys.stderr.write("[KOKORO TTS] AIVA voice identity initialized to af_bella (bold, crisp, assertive natural female voice, speed 1.05)\n")
+        elif "af_sarah" in kokoro_engine.voices:
+            aiva_voice_vector = kokoro_engine.voices["af_sarah"]
+            sys.stderr.write("[KOKORO TTS] AIVA voice identity initialized to af_sarah (fallback natural female voice)\n")
+        elif "af_heart" in kokoro_engine.voices:
             aiva_voice_vector = kokoro_engine.voices["af_heart"]
-            sys.stderr.write("[KOKORO TTS] AIVA voice identity initialized to af_heart (soft, conversational female neural voice)\n")
-        elif "af_sarah" in kokoro_engine.voices and "bf_emma" in kokoro_engine.voices:
-            sarah = kokoro_engine.voices["af_sarah"]
-            emma = kokoro_engine.voices["bf_emma"]
-            aiva_voice_vector = 0.6 * sarah + 0.4 * emma
-            sys.stderr.write("[KOKORO TTS] Blended AIVA voice identity created (60% af_sarah + 40% bf_emma)\n")
+            sys.stderr.write("[KOKORO TTS] AIVA voice identity initialized to af_heart\n")
         try:
-            warm_voice = aiva_voice_vector if aiva_voice_vector is not None else ("af_heart" if "af_heart" in kokoro_engine.voices else "af_sarah")
-            kokoro_engine.create("ready", voice=warm_voice, speed=1.0, lang="en-us")
+            warm_voice = aiva_voice_vector if aiva_voice_vector is not None else ("af_bella" if "af_bella" in kokoro_engine.voices else "af_sarah")
+            kokoro_engine.create("ready", voice=warm_voice, speed=DEFAULT_SPEED, lang="en-us")
             sys.stderr.write("[KOKORO TTS] Model and phonemizer pre-warmed.\n")
         except Exception as warm_err:
             sys.stderr.write(f"[KOKORO TTS] Pre-warm notice: {warm_err}\n")
@@ -90,6 +95,85 @@ def init_engine():
     except Exception as e:
         sys.stderr.write(f"[KOKORO TTS] Initialization error: {e}\n")
         return False
+
+def fetch_fabric_briefing():
+    """
+    Fetches real-time briefing telemetry across the tri-node fabric:
+    - Weather in Chennai via wttr.in (with resilient fallback)
+    - Active processes on PC-B (aiva/python services)
+    - PC-A WinRM port 5985 reachability
+    """
+    weather = "30°C and partly cloudy"
+    try:
+        req = urllib.request.Request("http://wttr.in/Chennai?format=%C+%t", headers={"User-Agent": "curl/7.68.0"})
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            w_text = resp.read().decode("utf-8").strip()
+            if w_text:
+                weather = w_text
+    except Exception as w_err:
+        sys.stderr.write(f"[Briefing] Weather query notice: {w_err}\n")
+
+    pcb_procs = []
+    try:
+        import psutil
+        for p in psutil.process_iter():
+            try:
+                name = p.name()
+                if any(k in name.lower() for k in ("aiva", "python")):
+                    pcb_procs.append(name)
+            except Exception:
+                pass
+    except Exception as ps_err:
+        sys.stderr.write(f"[Briefing] psutil inspection notice: {ps_err}\n")
+
+    proc_count = len(pcb_procs)
+    pcb_summary = f"{proc_count} active services" if proc_count > 0 else "core services"
+
+    pca_ip = "10.84.73.194"
+    winrm_up = False
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.5)
+        s.connect((pca_ip, 5985))
+        s.close()
+        winrm_up = True
+    except Exception:
+        pass
+
+    pca_status = "online and ready" if winrm_up else "in low-power standby"
+
+    return {
+        "success": True,
+        "weather": weather,
+        "pcb_processes": pcb_summary,
+        "pcb_process_count": proc_count,
+        "pca_status": pca_status,
+        "pca_online": winrm_up,
+        "timestamp": time.time()
+    }
+
+def start_render_keep_warm_daemon():
+    """
+    Background keep-warm daemon pinging Render free web service every 12 minutes (720s).
+    Keeps Render container awake without exceeding monthly 750 free instance hours allocation.
+    """
+    def _keep_warm_worker():
+        url = "https://aiva-yitg.onrender.com/health"
+        time.sleep(10)  # Initial grace window after boot
+        while True:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "AIVA-KeepWarm/1.0"})
+                with urllib.request.urlopen(req, timeout=12.0) as resp:
+                    code = resp.getcode()
+                    sys.stderr.write(f"[RenderKeepWarm] Health ping to {url} returned HTTP {code}\n")
+            except Exception as e:
+                sys.stderr.write(f"[RenderKeepWarm] Ping notice: {e}\n")
+            time.sleep(720)  # 12 minutes
+
+    t = threading.Thread(target=_keep_warm_worker, daemon=True, name="RenderKeepWarmDaemon")
+    t.start()
+    sys.stderr.write("[RenderKeepWarm] Daemon initialized (12-minute keep-warm cadence).\n")
 
 import webbrowser
 import subprocess
@@ -905,6 +989,13 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 "message": "PC-B host workstation daemon active"
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
+        elif self.path in ("/api/fabric/briefing", "/api/briefing"):
+            briefing_data = fetch_fabric_briefing()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(briefing_data).encode("utf-8"))
         elif self.path.startswith("/api/fabric/launch-visual") or self.path.startswith("/api/launch-visual"):
             parsed_url = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_url.query)
@@ -1009,6 +1100,15 @@ class KokoroHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"success": True, "results": vis_res}).encode("utf-8"))
             return
 
+        if self.path in ("/api/fabric/briefing", "/api/briefing"):
+            briefing_data = fetch_fabric_briefing()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(briefing_data).encode("utf-8"))
+            return
+
         if self.path in ("/api/agent/plan/execute", "/api/plan/execute"):
             content_length = int(self.headers.get("Content-Length", 0))
             body_bytes = self.rfile.read(content_length)
@@ -1103,8 +1203,8 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 return
 
             text = data.get("text", "").strip()
-            voice = data.get("voice", "af_heart")  # AIVA preferred female voice: warm, intelligent, articulate
-            speed = float(data.get("speed", 1.0))
+            voice = data.get("voice", DEFAULT_VOICE)  # AIVA preferred female voice: bold, crisp af_bella
+            speed = float(data.get("speed", DEFAULT_SPEED))
 
             if not text:
                 self.send_response(400)
@@ -1124,13 +1224,15 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
             try:
                 voice_target = voice
-                if str(voice).lower() in ("af_heart", "aiva", "default"):
-                    if "af_heart" in kokoro_engine.voices:
-                        voice_target = kokoro_engine.voices["af_heart"]
+                if str(voice).lower() in ("af_bella", "af_heart", "aiva", "default"):
+                    if "af_bella" in kokoro_engine.voices:
+                        voice_target = kokoro_engine.voices["af_bella"]
+                    elif "af_sarah" in kokoro_engine.voices:
+                        voice_target = kokoro_engine.voices["af_sarah"]
                     elif aiva_voice_vector is not None:
                         voice_target = aiva_voice_vector
-                    elif "af_sarah" in kokoro_engine.voices:
-                        voice_target = "af_sarah"
+                    elif "af_heart" in kokoro_engine.voices:
+                        voice_target = kokoro_engine.voices["af_heart"]
                 elif str(voice) not in kokoro_engine.voices and aiva_voice_vector is not None:
                     voice_target = aiva_voice_vector
 
@@ -1683,6 +1785,14 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "node": "PC-B",
                         "spokenResponse": "SSE module not found in packages/sse."
                     }
+            # 13. Route for Real-time Tri-Node Briefing Engine
+            elif action in ("BRIEFING", "FABRIC_BRIEFING", "GET_BRIEFING") or "briefing" in (query or command).lower():
+                briefing_data = fetch_fabric_briefing()
+                spoken = f"Welcome back! Outside it's {briefing_data['weather']} in Chennai. PC-B is holding steady with {briefing_data['pcb_processes']}, and PC-A compute node is {briefing_data['pca_status']}. All systems are green — what are we building today?"
+                briefing_data["spokenResponse"] = spoken
+                briefing_data["node"] = "PC-B"
+                res_data = briefing_data
+
             # Route for PC-A target
             elif "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():
                 import socket
@@ -1795,6 +1905,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
 def run_server(port=5050):
     init_engine()
+    start_render_keep_warm_daemon()
     server = ThreadingHTTPServer(("0.0.0.0", port), KokoroHandler)
     sys.stderr.write(f"[KOKORO TTS] Daemon listening on http://0.0.0.0:{port}\n")
     print(f"[KOKORO TTS] Kokoro TTS Daemon running on http://0.0.0.0:{port}", flush=True)
@@ -1807,7 +1918,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Kokoro TTS Microservice")
     parser.add_argument("--port", type=int, default=5050, help="Port to listen on")
-    parser.add_argument("--voice", type=str, default="af_heart", help="Default voice")
+    parser.add_argument("--voice", type=str, default="af_bella", help="Default voice")
     parser.add_argument("positional_port", nargs="?", type=int, default=None, help="Optional positional port")
     args = parser.parse_args()
     port = args.positional_port if args.positional_port is not None else args.port

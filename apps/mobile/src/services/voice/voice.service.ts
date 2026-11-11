@@ -18,7 +18,7 @@ const voiceEmitter = AivaVoiceModule ? new NativeEventEmitter(AivaVoiceModule) :
 
 /**
  * Text-to-Speech Engine Configuration Adapter
- * Configures natural, subtle female neural voice styling (1.05 pitch, 0.95 rate, en-IN locale)
+ * Configures bold, natural female neural voice styling (0.98 pitch, 1.02 rate, en-IN locale)
  */
 export const Tts = {
   setDefaultLanguage: (lang: string) => {
@@ -38,10 +38,16 @@ export const Tts = {
   },
 };
 
-// Configure warm, natural female neural voice profile to eliminate robotic clipping
+// Configure bold, grounded natural female neural voice profile (pitch 0.98, rate 1.02)
 Tts.setDefaultLanguage('en-IN');
-Tts.setDefaultPitch(1.05);
-Tts.setDefaultRate(0.95);
+Tts.setDefaultPitch(0.98);
+Tts.setDefaultRate(1.02);
+
+export async function initializeVoiceProfile(): Promise<void> {
+  Tts.setDefaultLanguage('en-IN');
+  Tts.setDefaultPitch(0.98);
+  Tts.setDefaultRate(1.02);
+}
 
 export type VoiceState =
   | 'DORMANT'
@@ -429,6 +435,25 @@ class AivaVoiceService {
       }
     }
     return { accessToken: null, refreshToken: null };
+  }
+
+  /**
+   * Retrieves summary of cached unread messaging notifications (WhatsApp/SMS)
+   */
+  async getUnreadNotifications(): Promise<{ count: number; summary: string }> {
+    if (Platform.OS === 'android' && AivaVoiceModule?.getUnreadNotifications) {
+      try {
+        const res = await AivaVoiceModule.getUnreadNotifications();
+        return {
+          count: res?.count ?? 0,
+          summary: res?.summary || 'no unread messages',
+        };
+      } catch (err: any) {
+        console.warn('[AIVA Voice] Failed to fetch unread notifications:', err?.message);
+        return { count: 0, summary: 'no unread messages' };
+      }
+    }
+    return { count: 0, summary: 'no unread messages' };
   }
 
   async launchApp(appNameOrPackage: string): Promise<boolean> {

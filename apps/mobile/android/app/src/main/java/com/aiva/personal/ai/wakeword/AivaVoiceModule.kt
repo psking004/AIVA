@@ -135,22 +135,24 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                 }
             }
             isTtsInitialized = true
-            tts?.setPitch(1.05f)
-            tts?.setSpeechRate(0.95f)
+            tts?.setPitch(0.98f)
+            tts?.setSpeechRate(1.02f)
 
-            // Select natural female voice if provided by the device engine (e.g. Google TTS)
+            // Select natural bold female voice if provided by the device engine (e.g. Google TTS)
             try {
                 val voices = tts?.voices
                 val femaleVoice = voices?.firstOrNull { voice ->
-                    (voice.locale == Locale.US || voice.locale.language == Locale.getDefault().language) &&
-                    (voice.name.contains("female", ignoreCase = true) ||
-                     voice.name.contains("en-us-x-sfg", ignoreCase = true) ||
-                     voice.name.contains("en-us-x-tpf", ignoreCase = true) ||
-                     voice.features?.contains("female") == true)
+                    val name = voice.name.lowercase()
+                    name.contains("en-in-x-ahf") ||
+                    name.contains("en-us-x-sfg") ||
+                    name.contains("en-us-x-tpf") ||
+                    (voice.locale.language == "en" && (name.contains("female") || voice.features?.contains("female") == true))
+                } ?: voices?.firstOrNull { voice ->
+                    voice.name.contains("female", ignoreCase = true) || voice.features?.contains("female") == true
                 }
                 if (femaleVoice != null) {
                     tts?.voice = femaleVoice
-                    Log.i(TAG, "Selected natural female TTS voice: ${femaleVoice.name}")
+                    Log.i(TAG, "Selected natural bold female TTS voice: ${femaleVoice.name}")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Could not query or set female voice: ${e.message}")
@@ -1064,6 +1066,24 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             Log.i(TAG, "Registered exported broadcast receiver for $ACTION_VOICE_COMMAND")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register broadcast receiver for $ACTION_VOICE_COMMAND: ${e.message}")
+        }
+    }
+
+    @ReactMethod
+    fun getUnreadNotifications(promise: Promise) {
+        try {
+            val (count, summary) = AivaAccessibilityService.getAndClearUnreadSummary()
+            val map = Arguments.createMap().apply {
+                putInt("count", count)
+                putString("summary", summary)
+            }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            val fallbackMap = Arguments.createMap().apply {
+                putInt("count", 0)
+                putString("summary", "no unread messages")
+            }
+            promise.resolve(fallbackMap)
         }
     }
 

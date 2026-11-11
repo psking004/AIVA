@@ -2,11 +2,13 @@ package com.aiva.personal.ai.wakeword
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.app.Notification
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * AivaAccessibilityService
@@ -14,7 +16,15 @@ import android.view.accessibility.AccessibilityNodeInfo
  * Dedicated Android Accessibility Service for hands-free automation:
  * 1. Automatically dispatches the "Send" button in WhatsApp (com.whatsapp:id/send).
  * 2. Automatically selects "Add to new note" in Vivo Notes (com.vivo.notes) to bypass SelectorActivity.
+ * 3. Captures and caches messaging notifications (WhatsApp, SMS, Google Messages) for stale briefing updates.
  */
+data class NotificationRecord(
+    val packageName: String,
+    val title: String,
+    val text: String,
+    val timestamp: Long
+)
+
 class AivaAccessibilityService : AccessibilityService() {
 
     companion object {
@@ -26,6 +36,42 @@ class AivaAccessibilityService : AccessibilityService() {
 
         @Volatile
         var isWhatsAppAutoSendPending = false
+
+        private val unreadNotifications = CopyOnWriteArrayList<NotificationRecord>()
+
+        fun addNotification(pkg: String, title: String, text: String) {
+            unreadNotifications.add(NotificationRecord(pkg, title, text, System.currentTimeMillis()))
+            if (unreadNotifications.size > 20) {
+                unreadNotifications.removeAt(0)
+            }
+        }
+
+        fun getAndClearUnreadSummary(): Pair<Int, String> {
+            val count = unreadNotifications.size
+            if (count == 0) {
+                return Pair(0, "no unread messages")
+            }
+            val appSenders = unreadNotifications.mapNotNull { rec ->
+                val app = when {
+                    rec.packageName.contains("whatsapp", ignoreCase = true) -> "WhatsApp"
+                    rec.packageName.contains("mms", ignoreCase = true) ||
+                    rec.packageName.contains("messaging", ignoreCase = true) ||
+                    rec.packageName.contains("sms", ignoreCase = true) -> "SMS"
+                    else -> null
+                }
+                if (app != null) {
+                    if (rec.title.isNotBlank()) "$app message from ${rec.title}" else "$app message"
+                } else null
+            }.distinct()
+
+            unreadNotifications.clear()
+            val summary = when {
+                appSenders.isEmpty() -> if (count == 1) "1 new notification" else "$count new notifications"
+                appSenders.size == 1 -> appSenders.first()
+                else -> "${appSenders.size} notifications including ${appSenders.take(2).joinToString(" and ")}"
+            }
+            return Pair(count, summary)
+        }
 
         fun triggerWhatsAppAutoSend(delayMs: Long = 800) {
             isWhatsAppAutoSendPending = true
@@ -63,7 +109,8 @@ class AivaAccessibilityService : AccessibilityService() {
 
         val info = serviceInfo ?: AccessibilityServiceInfo()
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
         info.flags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
@@ -75,6 +122,30 @@ class AivaAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val pkgName = event.packageName?.toString() ?: return
+
+        // 0. Intercept incoming notifications for WhatsApp, SMS, and messaging apps
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            val isMessagingApp = pkgName.contains("whatsapp", ignoreCase = true) ||
+                    pkgName.contains("messaging", ignoreCase = true) ||
+                    pkgName.contains("mms", ignoreCase = true) ||
+                    pkgName.contains("sms", ignoreCase = true)
+            if (isMessagingApp) {
+                var title = ""
+                var text = ""
+                val parcelable = event.parcelableData
+                if (parcelable is Notification) {
+                    val extras = parcelable.extras
+                    title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+                    text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: ""
+                }
+                if (title.isBlank() && event.text.isNotEmpty()) {
+                    text = event.text.joinToString(" ")
+                }
+                addNotification(pkgName, title, text)
+                Log.i(TAG, "Cached messaging notification: pkg=$pkgName, title=$title, text=$text")
+            }
+            return
+        }
 
         // 1. Auto-dismiss Vivo Notes Share/Selector Activity
         if (pkgName == "com.vivo.notes") {
