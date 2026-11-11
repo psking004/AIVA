@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -63,6 +66,54 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
     private var lastTtsEndTime: Long = 0L
     private var voiceCommandReceiver: BroadcastReceiver? = null
 
+    private val audioManager: AudioManager? by lazy {
+        reactContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    }
+    private var audioFocusRequest: AudioFocusRequest? = null
+
+    private fun requestTransientAudioFocus() {
+        try {
+            audioManager?.let { am ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val playbackAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                    val focusReq = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                        .setAudioAttributes(playbackAttributes)
+                        .setAcceptsDelayedFocusGain(false)
+                        .setOnAudioFocusChangeListener { /* no-op */ }
+                        .build()
+                    audioFocusRequest = focusReq
+                    am.requestAudioFocus(focusReq)
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "requestTransientAudioFocus error: ${e.message}")
+        }
+    }
+
+    private fun abandonAudioFocusInternal() {
+        try {
+            audioManager?.let { am ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    audioFocusRequest?.let { req ->
+                        am.abandonAudioFocusRequest(req)
+                        audioFocusRequest = null
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.abandonAudioFocus(null)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "abandonAudioFocusInternal error: ${e.message}")
+        }
+    }
+
     init {
         mainHandler.post {
             try {
@@ -76,13 +127,16 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            var result = tts?.setLanguage(Locale.US)
+            var result = tts?.setLanguage(Locale("en", "IN"))
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                result = tts?.setLanguage(Locale.getDefault())
+                result = tts?.setLanguage(Locale.US)
+                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    result = tts?.setLanguage(Locale.getDefault())
+                }
             }
             isTtsInitialized = true
-            tts?.setPitch(1.06f)
-            tts?.setSpeechRate(1.02f)
+            tts?.setPitch(1.05f)
+            tts?.setSpeechRate(0.95f)
 
             // Select natural female voice if provided by the device engine (e.g. Google TTS)
             try {
@@ -113,6 +167,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
                 isSpeaking = true
+                requestTransientAudioFocus()
                 pauseWakeWordService()
                 try {
                     AivaWakeWordForegroundService.resetDetectionDebounce()
@@ -125,6 +180,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
             override fun onDone(utteranceId: String?) {
                 isSpeaking = false
+                abandonAudioFocusInternal()
                 lastTtsEndTime = SystemClock.uptimeMillis()
                 Log.i(TAG, "TTS onDone($utteranceId): applying 400ms acoustic settling window")
 
@@ -141,6 +197,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
                 isSpeaking = false
+                abandonAudioFocusInternal()
                 lastTtsEndTime = SystemClock.uptimeMillis()
                 mainHandler.postDelayed({
                     resumeWakeWordService()
@@ -154,6 +211,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
             override fun onError(utteranceId: String?, errorCode: Int) {
                 isSpeaking = false
+                abandonAudioFocusInternal()
                 lastTtsEndTime = SystemClock.uptimeMillis()
                 mainHandler.postDelayed({
                     resumeWakeWordService()
@@ -202,6 +260,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             }
             speechRecognizer = null
             isListening = false
+            abandonAudioFocusInternal()
 
             // Delay resuming wake-word service by 200ms to allow Android Audio HAL
             // to completely release the microphone resource before AudioRecord binds.
@@ -398,11 +457,13 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             }
 
+            requestTransientAudioFocus()
             speechRecognizer?.startListening(intent)
             promise.resolve(true)
 
         } catch (e: Exception) {
             isListening = false
+            abandonAudioFocusInternal()
             resumeWakeWordService()
             promise.reject("START_ERROR", "Failed to start speech recognition: ${e.message}")
         }
@@ -457,6 +518,7 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             try {
                 tts?.stop()
                 isSpeaking = false
+                abandonAudioFocusInternal()
                 lastTtsEndTime = SystemClock.uptimeMillis()
                 sendEvent("onTtsInterrupted", Arguments.createMap())
                 promise.resolve(true)
@@ -1002,6 +1064,49 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
             Log.i(TAG, "Registered exported broadcast receiver for $ACTION_VOICE_COMMAND")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register broadcast receiver for $ACTION_VOICE_COMMAND: ${e.message}")
+        }
+    }
+
+    @ReactMethod
+    fun abandonAudioFocus(promise: Promise? = null) {
+        abandonAudioFocusInternal()
+        promise?.resolve(true)
+    }
+
+    @ReactMethod
+    fun setTtsLanguage(language: String, promise: Promise? = null) {
+        mainHandler.post {
+            try {
+                val locale = Locale.forLanguageTag(language)
+                tts?.setLanguage(locale)
+                promise?.resolve(true)
+            } catch (e: Exception) {
+                promise?.reject("TTS_CONFIG_ERROR", e.message)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun setTtsPitch(pitch: Float, promise: Promise? = null) {
+        mainHandler.post {
+            try {
+                tts?.setPitch(pitch)
+                promise?.resolve(true)
+            } catch (e: Exception) {
+                promise?.reject("TTS_CONFIG_ERROR", e.message)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun setTtsRate(rate: Float, promise: Promise? = null) {
+        mainHandler.post {
+            try {
+                tts?.setSpeechRate(rate)
+                promise?.resolve(true)
+            } catch (e: Exception) {
+                promise?.reject("TTS_CONFIG_ERROR", e.message)
+            }
         }
     }
 

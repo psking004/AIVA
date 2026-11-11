@@ -358,6 +358,112 @@ class SovereignDecisionCore:
         return best_i, avg_util, min_worst_case_regret
 
 
+def normalize_multilingual_intent(text: str) -> dict[str, Any] | None:
+    """
+    Translates & normalizes Tamil and Tanglish spoken queries into sovereign fabric actions:
+    - "call pannu" / "phone podu" -> CALL_CONTACT
+    - "message anupu" / "whatsapp pannu" -> SEND_WHATSAPP
+    - "open pannu" / "thira" -> OPEN_APP
+    Returns dict with action, target/app/message, node, spokenResponse, or clarification if ambiguous.
+    """
+    if not text:
+        return None
+    raw = text.strip()
+    raw_lower = raw.lower()
+
+    # 1. CALL_CONTACT (Tamil / Tanglish)
+    # Examples: "Amma ku call pannu", "call pannu Amma", "Amma ku phone podu", "phone podu Amma", "call Appa"
+    call_patterns = [
+        r'(?:(?:ku|kku)?\s*(?:call\s*pannu|phone\s*podu|call\s*seiyu))\s+(.+)',
+        r'(.+?)\s*(?:kku|ku)?\s*(?:call\s*pannu|phone\s*podu|call\s*seiyu)',
+        r'(?:(?:கால்\s*பண்ணு|போன்\s*போடு|அழைக்க)\s*(.+))',
+        r'(.+?)\s*(?:க்கு\s*)?(?:கால்\s*பண்ணு|போன்\s*போடு)',
+    ]
+    for cp in call_patterns:
+        m = re.search(cp, raw, re.IGNORECASE)
+        if m:
+            target = m.group(1).strip()
+            target = re.sub(r'\s*(?:kku|ku|க்கு)$', '', target, flags=re.I).strip()
+            if target and target.lower() not in ("please", "da", "pa", "na"):
+                return {
+                    "action": "CALL_CONTACT",
+                    "target": target,
+                    "node": "MOBILE",
+                    "spokenResponse": f"Calling {target} now.",
+                    "intent": "CALL_CONTACT",
+                }
+
+    # 2. SEND_WHATSAPP (Tamil / Tanglish)
+    # Examples: "Amma ku message anupu I will be late", "whatsapp pannu Appa ku hello", "Appa ku whatsapp anupu"
+    wa_patterns = [
+        r'(.+?)\s*(?:kku|ku)?\s*(?:message\s*anupu|whatsapp\s*pannu|whatsapp\s*anupu)\s*(.*)',
+        r'(?:message\s*anupu|whatsapp\s*pannu|whatsapp\s*anupu)\s+(?:(?:to|for|ku)\s+)?([a-zA-Z0-9_\u0B80-\u0BFF]+)\s*(.*)',
+        r'(.+?)\s*(?:க்கு\s*)?(?:செய்தி\s*அனுப்பு|வாட்ஸ்அப்\s*பண்ணு|மெசேஜ்\s*அனுப்பு)\s*(.*)',
+        r'(?:செய்தி\s*அனுப்பு|வாட்ஸ்அப்\s*பண்ணு|மெசேஜ்\s*அனுப்பு)\s+([^\s]+)\s*(.*)',
+    ]
+    for wp in wa_patterns:
+        m = re.search(wp, raw, re.IGNORECASE)
+        if m:
+            target = m.group(1).strip()
+            target = re.sub(r'\s*(?:kku|ku|க்கு)$', '', target, flags=re.I).strip()
+            msg = m.group(2).strip() if len(m.groups()) > 1 and m.group(2) else "Hello"
+            if target:
+                return {
+                    "action": "SEND_WHATSAPP",
+                    "target": target,
+                    "message": msg,
+                    "node": "MOBILE",
+                    "spokenResponse": f"Sending WhatsApp message to {target}.",
+                    "intent": "SEND_WHATSAPP",
+                }
+
+    # 3. OPEN_APP (Tamil / Tanglish)
+    # Examples: "Notepad thira", "calculator open pannu", "VS Code thira", "WhatsApp open pannu"
+    open_patterns = [
+        r'(.+?)\s*(?:open\s*pannu|thira|thiran|thirakkavum)',
+        r'(?:open\s*pannu|thira|thiran|thirakkavum)\s+(.+)',
+        r'(.+?)\s*(?:திற|திறக்க|ஓபன்\s*பண்ணு)',
+        r'(?:திற|திறக்க|ஓபன்\s*பண்ணு)\s+(.+)',
+    ]
+    for op in open_patterns:
+        m = re.search(op, raw, re.IGNORECASE)
+        if m:
+            app_raw = m.group(1).strip()
+            app_raw = re.sub(r'\s*(?:ah|ai|a|ஐ)$', '', app_raw, flags=re.I).strip()
+            if app_raw and app_raw.lower() not in ("please", "da", "pa", "door", "window"):
+                node = "MOBILE" if app_raw.lower() in ("camera", "whatsapp", "notes", "dialer", "gallery", "settings", "phone") else "PC-B"
+                return {
+                    "action": "OPEN_APP",
+                    "application": app_raw,
+                    "target": app_raw,
+                    "node": node,
+                    "spokenResponse": f"Opening {app_raw}.",
+                    "intent": "OPEN_APP",
+                }
+
+    # 4. Ambiguous Tamil/Tanglish input detection
+    has_tamil = bool(re.search(r'[\u0B80-\u0BFF]', raw))
+    tanglish_tokens = re.findall(r'\b(?:pannu|panlam|sollu|sollunga|vaanga|ponga|irukku|illa|nalla|amma|appa|thira|anupu|epdi)\b', raw_lower)
+    if has_tamil or len(tanglish_tokens) >= 1:
+        if any(t in raw_lower for t in ["call", "phone", "pesu"]):
+            clarification = "I caught that, but I want to make sure I understood correctly. Did you mean to call someone?"
+        elif any(t in raw_lower for t in ["message", "whatsapp", "anupu", "sol"]):
+            clarification = "I caught that, but I want to make sure I understood correctly. Did you mean to send a WhatsApp message?"
+        elif any(t in raw_lower for t in ["thira", "open"]):
+            clarification = "I caught that, but I want to make sure I understood correctly. Did you mean to open an application?"
+        else:
+            clarification = f"I caught that, but I want to make sure I understood correctly. Did you mean: '{raw}'?"
+        return {
+            "action": "CLARIFICATION_REQUIRED",
+            "is_ambiguous": True,
+            "spokenResponse": clarification,
+            "node": "MOBILE",
+            "intent": "CLARIFY",
+        }
+
+    return None
+
+
 def dynamic_sse_planner(query: str) -> dict[str, Any]:
     """
     Universal Strategic Systems Engine planner for arbitrary multi-intent tasks.
@@ -365,6 +471,46 @@ def dynamic_sse_planner(query: str) -> dict[str, Any]:
     """
     clean = (query or "").strip()
     steps: list[dict[str, Any]] = []
+
+    # 0a. Check for multilingual Tamil / Tanglish intent
+    multi = normalize_multilingual_intent(clean)
+    if multi:
+        if multi.get("is_ambiguous"):
+            return {
+                "success": False,
+                "strategy": "CONVERSATIONAL_CLARIFICATION",
+                "query": clean,
+                "steps": [],
+                "nodes_involved": ["MOBILE"],
+                "target_node": "MOBILE",
+                "solver_tier": "T1_IESDS",
+                "expected_utility": 5.0,
+                "spokenResponse": multi["spokenResponse"],
+                "rationale": "Ambiguous multilingual Tamil/Tanglish transcript detected; returning interactive conversational clarification."
+            }
+        step = {
+            "node": multi["node"],
+            "action": multi["action"],
+        }
+        if "target" in multi:
+            step["target"] = multi["target"]
+        if "message" in multi:
+            step["message"] = multi["message"]
+        if "application" in multi:
+            step["application"] = multi["application"]
+
+        return {
+            "success": True,
+            "strategy": "MULTILINGUAL_INTENT_DISPATCH",
+            "query": clean,
+            "steps": [step],
+            "nodes_involved": [multi["node"]],
+            "target_node": multi["node"].replace("-", "_"),
+            "solver_tier": "T1_IESDS",
+            "expected_utility": 10.0,
+            "spokenResponse": multi["spokenResponse"],
+            "rationale": f"Successfully translated multilingual idiom into sovereign action {multi['action']} on {multi['node']}."
+        }
 
     package_map = {
         "7zip": "7zip.7zip",
@@ -641,6 +787,42 @@ def evaluate_strategic_intent(query: str, context: dict[str, Any] | None = None)
     actions_p1 = [NodeID.MOBILE.value, NodeID.PC_B.value, NodeID.PC_A.value]  # ["MOBILE", "PC_B", "PC_A"]
     actions_p2 = ["OPTIMAL_MESH", "HIGH_LATENCY_PARTITION"]
 
+    # 0. Multilingual Tamil / Tanglish Intent Interception
+    multi = normalize_multilingual_intent(query)
+    if multi:
+        if multi.get("is_ambiguous"):
+            return {
+                "success": False,
+                "strategy": "CONVERSATIONAL_CLARIFICATION",
+                "query": query,
+                "steps": [],
+                "target_node": "MOBILE",
+                "action_index": 0,
+                "solver_tier": "T1_IESDS",
+                "expected_utility": 5.0,
+                "worst_case_regret": 1.0,
+                "spokenResponse": multi["spokenResponse"],
+                "rationale": "Ambiguous multilingual Tamil/Tanglish transcript detected; returning interactive conversational clarification.",
+            }
+        step = {
+            "node": multi["node"],
+            "action": multi["action"],
+            **{k: v for k, v in multi.items() if k not in ("action", "node", "intent", "spokenResponse", "is_ambiguous")}
+        }
+        return {
+            "success": True,
+            "strategy": "MULTILINGUAL_INTENT_DISPATCH",
+            "query": query,
+            "steps": [step],
+            "target_node": multi["node"].replace("-", "_"),
+            "action_index": 0 if "MOBILE" in multi["node"] else 1,
+            "solver_tier": "T1_IESDS",
+            "expected_utility": 10.0,
+            "worst_case_regret": 0.0,
+            "spokenResponse": multi["spokenResponse"],
+            "rationale": f"Routed multilingual intent to {multi['node']} for action {multi['action']}.",
+        }
+
     raw_clauses = [c.strip() for c in re.split(r'[,;]|\band\s+|\bthen\s+|\balso\s+', query) if c.strip()]
     if len(raw_clauses) > 1 and any(k in q for k in [" and ", ", then ", "then ", ";", ", create ", ", install ", ", schedule ", "install ", "also ", "both"]):
         plan = dynamic_sse_planner(query)
@@ -752,14 +934,109 @@ def evaluate_strategic_intent(query: str, context: dict[str, Any] | None = None)
 
 class DynamicUIAgent:
     """
-    Subagent that inspects Windows UI Automation trees, clicks target buttons dynamically,
-    and automatically executes manual save routines (Ctrl+S / Save As dialogs).
-    Supports local execution (PC-B) and remote execution (PC-A via WinRM).
+    Subagent that inspects Windows UI Automation trees (inspired by vercel-labs/agent-desktop
+    accessibility tree inspection), clicks target buttons dynamically, and automatically
+    executes manual save routines (Ctrl+S / Save As dialogs).
+    Includes loop prevention watchdog (maximum retry threshold of 3) across PC-B and PC-A.
     """
 
+    MAX_RETRIES: int = 3
+    _retry_history: dict[str, int] = collections.defaultdict(int)
+
+    @classmethod
+    def reset_retry_counter(cls, target_key: str | None = None) -> None:
+        """Resets loop prevention watchdog state for target or globally."""
+        if target_key:
+            cls._retry_history.pop(target_key, None)
+        else:
+            cls._retry_history.clear()
+
     @staticmethod
-    def click_element_by_name(window_title: str, target_name: str, target_node: str = "PC-B") -> bool:
-        """Inspects UI Automation tree and invokes target element by Name or AutomationId."""
+    def get_ui_tree_snapshot(window_title: str = "", target_node: str = "PC-B") -> list[dict[str, Any]]:
+        """
+        Inspects Windows UI Automation hierarchy and returns structured interactive elements:
+        name, automation_id, control_type, is_enabled, and bounding rectangle coordinates.
+        Supports both PC-B (local) and PC-A (WinRM remote).
+        """
+        ps_inspect = f"""
+        Add-Type -AssemblyName UIAutomationClient
+        Add-Type -AssemblyName UIAutomationTypes
+        
+        $root = [System.Windows.Automation.AutomationElement]::RootElement
+        $targetWin = $null
+        if ("{window_title}") {{
+            $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, "{window_title}")
+            $targetWin = $root.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+            if (-not $targetWin) {{
+                $allWins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+                foreach ($w in $allWins) {{
+                    if ($w.Current.Name -like "*{window_title}*") {{
+                        $targetWin = $w
+                        break
+                    }}
+                }}
+            }}
+        }} else {{
+            $targetWin = $root
+        }}
+        
+        if ($targetWin) {{
+            $scope = if ("{window_title}") {{ [System.Windows.Automation.TreeScope]::Descendants }} else {{ [System.Windows.Automation.TreeScope]::Children }}
+            $elems = $targetWin.FindAll($scope, [System.Windows.Automation.Condition]::TrueCondition)
+            $list = @()
+            $count = 0
+            foreach ($el in $elems) {{
+                if ($count -ge 120) {{ break }}
+                $curr = $el.Current
+                if (-not [string]::IsNullOrWhiteSpace($curr.Name) -or -not [string]::IsNullOrWhiteSpace($curr.AutomationId)) {{
+                    $rect = $curr.BoundingRectangle
+                    $item = @{{
+                        Name = $curr.Name
+                        AutomationId = $curr.AutomationId
+                        ControlType = $curr.ControlType.ProgrammaticName
+                        IsEnabled = $curr.IsEnabled
+                        Bounds = @{{
+                            X = [int]$rect.X
+                            Y = [int]$rect.Y
+                            Width = [int]$rect.Width
+                            Height = [int]$rect.Height
+                        }}
+                    }}
+                    $list += $item
+                    $count++
+                }}
+            }}
+            $list | ConvertTo-Json -Compress
+        }} else {{
+            Write-Output "[]"
+        }}
+        """
+        try:
+            if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
+                escaped = ps_inspect.replace('"', '`"').replace("\n", "; ")
+                cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {escaped} }}"'
+                res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=12)
+                raw_out = res.stdout.strip()
+            else:
+                res = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_inspect], capture_output=True, text=True, timeout=10)
+                raw_out = res.stdout.strip()
+
+            if raw_out.startswith("[") or raw_out.startswith("{"):
+                parsed = json.loads(raw_out)
+                return parsed if isinstance(parsed, list) else [parsed]
+            return []
+        except Exception as e:
+            sys.stderr.write(f"[DynamicUIAgent] get_ui_tree_snapshot exception: {e}\n")
+            return []
+
+    @classmethod
+    def click_element_by_name(cls, window_title: str, target_name: str, target_node: str = "PC-B") -> bool:
+        """Inspects UI Automation tree and invokes target element by Name or AutomationId with loop prevention watchdog."""
+        target_key = f"{target_node}:{window_title}:{target_name}"
+        if cls._retry_history[target_key] >= cls.MAX_RETRIES:
+            sys.stderr.write(f"[DynamicUIAgent Watchdog] Loop prevention triggered: {target_key} reached limit ({cls.MAX_RETRIES} attempts).\n")
+            return False
+
         ps_click = f"""
         Add-Type -AssemblyName UIAutomationClient
         Add-Type -AssemblyName UIAutomationTypes
@@ -795,14 +1072,26 @@ class DynamicUIAgent:
             }}
         }}
         """
-        if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
-            escaped = ps_click.replace('"', '`"').replace("\n", "; ")
-            cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {escaped} }}"'
-            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            return "CLICKED" in res.stdout
+        success = False
+        try:
+            if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
+                escaped = ps_click.replace('"', '`"').replace("\n", "; ")
+                cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {escaped} }}"'
+                res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=12)
+                success = "CLICKED" in res.stdout
+            else:
+                res = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_click], capture_output=True, text=True, timeout=10)
+                success = "CLICKED" in res.stdout
+        except Exception as e:
+            sys.stderr.write(f"[DynamicUIAgent] click_element_by_name exception: {e}\n")
+            success = False
+
+        if success:
+            cls._retry_history[target_key] = 0
+            return True
         else:
-            res = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_click], capture_output=True, text=True)
-            return "CLICKED" in res.stdout
+            cls._retry_history[target_key] += 1
+            return False
 
     @staticmethod
     def ensure_manual_save(window_title: str = "", target_node: str = "PC-B") -> bool:

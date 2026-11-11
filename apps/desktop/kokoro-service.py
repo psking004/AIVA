@@ -71,13 +71,16 @@ def init_engine():
         sys.stderr.write("[KOKORO TTS] Loading Kokoro-82M ONNX model into memory...\n")
         t0 = time.time()
         kokoro_engine = Kokoro(MODEL_PATH, VOICES_PATH)
-        if "af_sarah" in kokoro_engine.voices and "bf_emma" in kokoro_engine.voices:
+        if "af_heart" in kokoro_engine.voices:
+            aiva_voice_vector = kokoro_engine.voices["af_heart"]
+            sys.stderr.write("[KOKORO TTS] AIVA voice identity initialized to af_heart (soft, conversational female neural voice)\n")
+        elif "af_sarah" in kokoro_engine.voices and "bf_emma" in kokoro_engine.voices:
             sarah = kokoro_engine.voices["af_sarah"]
             emma = kokoro_engine.voices["bf_emma"]
             aiva_voice_vector = 0.6 * sarah + 0.4 * emma
             sys.stderr.write("[KOKORO TTS] Blended AIVA voice identity created (60% af_sarah + 40% bf_emma)\n")
         try:
-            warm_voice = aiva_voice_vector if aiva_voice_vector is not None else "af_sarah"
+            warm_voice = aiva_voice_vector if aiva_voice_vector is not None else ("af_heart" if "af_heart" in kokoro_engine.voices else "af_sarah")
             kokoro_engine.create("ready", voice=warm_voice, speed=1.0, lang="en-us")
             sys.stderr.write("[KOKORO TTS] Model and phonemizer pre-warmed.\n")
         except Exception as warm_err:
@@ -652,15 +655,18 @@ def launch_fabric_visual(target="BOTH"):
     # 1. PC-B Native Execution
     if target_clean in ["PC-B", "BOTH", "LOCAL", "ALL"]:
         native_pcb = find_native_exe(EXE_CANDIDATES_PCB)
+        clean_env = os.environ.copy()
+        clean_env.pop("ELECTRON_RUN_AS_NODE", None)
+        clean_env.pop("ELECTRON_NO_ASAR", None)
         if native_pcb:
             try:
-                subprocess.Popen([native_pcb], cwd=os.path.dirname(native_pcb))
+                subprocess.Popen([native_pcb], cwd=os.path.dirname(native_pcb), env=clean_env)
                 results["PC-B"] = f"Launched native binary: {native_pcb}"
             except Exception as e:
                 results["PC-B"] = f"Failed launching native exe: {e}"
         else:
             try:
-                subprocess.Popen(["pnpm", "--filter", "@aiva/desktop", "start"], cwd=r"C:\Users\bhara\AIVA", shell=True)
+                subprocess.Popen(["pnpm", "--filter", "@aiva/desktop", "start"], cwd=r"C:\Users\bhara\AIVA", shell=True, env=clean_env)
                 results["PC-B"] = "Launched native desktop application via Electron."
             except Exception as e:
                 results["PC-B"] = f"Failed to start desktop app: {e}"
@@ -840,11 +846,11 @@ def execute_sse_plan_steps(steps):
         elif "MOBILE" in s_node:
             adb_cmd = None
             if s_act in ("SEND_WHATSAPP", "WHATSAPP"):
-                to = s.get("recipient") or s.get("contact") or "Appa"
+                to = s.get("target") or s.get("recipient") or s.get("contact") or "Appa"
                 msg = s.get("message") or s.get("content") or "Hello from AIVA"
                 adb_cmd = f"adb -s 10.84.73.78:5555 shell am broadcast -a com.aiva.action.VOICE_COMMAND --es query 'send whatsapp message to {to} saying {msg}'"
             elif s_act in ("CALL_CONTACT", "CALL"):
-                contact = s.get("contact") or s.get("target") or "Appa"
+                contact = s.get("target") or s.get("contact") or "Appa"
                 adb_cmd = f"adb -s 10.84.73.78:5555 shell am broadcast -a com.aiva.action.VOICE_COMMAND --es query 'call {contact}'"
             elif s_act in ("CREATE_NOTE", "NOTE"):
                 note = s.get("content") or s.get("title") or "Meeting note"

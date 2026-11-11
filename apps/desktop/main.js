@@ -15,6 +15,9 @@
  * 10. Voice Wake-Word & STT Bridge (optional local modules)
  */
 
+// Ensure Electron runs in full application mode, never crippled as plain Node
+delete process.env.ELECTRON_RUN_AS_NODE;
+
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -163,7 +166,9 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
 
 let mainWindow = null;
 let tray = null;
-app.isQuitting = false;
+if (app) {
+  app.isQuitting = false;
+}
 
 // Active state
 let hardwareInfo = null;

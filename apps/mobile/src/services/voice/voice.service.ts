@@ -16,6 +16,33 @@ import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
 const { AivaVoiceModule } = NativeModules;
 const voiceEmitter = AivaVoiceModule ? new NativeEventEmitter(AivaVoiceModule) : null;
 
+/**
+ * Text-to-Speech Engine Configuration Adapter
+ * Configures natural, subtle female neural voice styling (1.05 pitch, 0.95 rate, en-IN locale)
+ */
+export const Tts = {
+  setDefaultLanguage: (lang: string) => {
+    if (Platform.OS === 'android' && AivaVoiceModule?.setTtsLanguage) {
+      AivaVoiceModule.setTtsLanguage(lang);
+    }
+  },
+  setDefaultPitch: (pitch: number) => {
+    if (Platform.OS === 'android' && AivaVoiceModule?.setTtsPitch) {
+      AivaVoiceModule.setTtsPitch(pitch);
+    }
+  },
+  setDefaultRate: (rate: number) => {
+    if (Platform.OS === 'android' && AivaVoiceModule?.setTtsRate) {
+      AivaVoiceModule.setTtsRate(rate);
+    }
+  },
+};
+
+// Configure warm, natural female neural voice profile to eliminate robotic clipping
+Tts.setDefaultLanguage('en-IN');
+Tts.setDefaultPitch(1.05);
+Tts.setDefaultRate(0.95);
+
 export type VoiceState =
   | 'DORMANT'
   | 'IDLE'
@@ -309,6 +336,21 @@ class AivaVoiceService {
         resolve();
       }
     });
+  }
+
+  /**
+   * Release and abandon system audio focus completely (called during IDLE / DORMANT)
+   */
+  async abandonAudioFocus(): Promise<boolean> {
+    if (Platform.OS === 'android' && AivaVoiceModule?.abandonAudioFocus) {
+      try {
+        await AivaVoiceModule.abandonAudioFocus();
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
   }
 
   /**

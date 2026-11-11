@@ -43,6 +43,42 @@ import {
   parseNoteFollowUp,
 } from '../src/services/remote/remote-exec.service';
 
+// 100% English wake greetings (Cold Start Default)
+export const WAKE_ACKNOWLEDGMENTS_EN = [
+  "All ears! Tell me what's on your mind.",
+  "Hey! I'm right here. What are we building today?",
+  "Hey there! Ready when you are.",
+  "At your service! What's the plan?",
+  "Hey! What can I get done for you?",
+  "Ready to roll! What's next?",
+];
+
+// Tamil / Tanglish wake greetings (Unlocked only after user speaks Tamil/Tanglish)
+export const WAKE_ACKNOWLEDGMENTS_TA = [
+  "Solla pa, I'm listening!",
+  "Enna panlam? Ready to go!",
+  "Sollunga, what's next?",
+  "Vanakkam! Enna seiyanum sollunga.",
+  "Naan ready, sollunga!",
+];
+
+export const detectLanguageFromTranscript = (transcript: string): boolean => {
+  if (!transcript) return false;
+  // 1. Tamil script range (\u0B80 - \u0BFF)
+  const hasTamilScript = /[\u0B80-\u0BFF]/.test(transcript);
+  // 2. Tanglish marker tokens
+  const hasTanglishTokens = /\b(?:pannu|panlam|sollu|sollunga|vaanga|ponga|irukku|illa|nalla|amma|appa|thira|anupu|epdi)\b/i.test(transcript);
+  return hasTamilScript || hasTanglishTokens;
+};
+
+export const getRandomWakeAck = (userSpokeTamil: boolean): string => {
+  const pool = userSpokeTamil
+    ? [...WAKE_ACKNOWLEDGMENTS_EN, ...WAKE_ACKNOWLEDGMENTS_TA]
+    : WAKE_ACKNOWLEDGMENTS_EN;
+  const idx = Math.floor(Math.random() * pool.length);
+  return pool[idx];
+};
+
 export default function MobileHomeScreen() {
   // Presence lifecycle: DORMANT by default (face hidden, minimal clock)
   const [presenceState, setPresenceState] = useState<AivaPresenceState>('DORMANT');
@@ -55,6 +91,9 @@ export default function MobileHomeScreen() {
   const [isSending, setIsSending] = useState(false);
   const [lastResponseText, setLastResponseText] = useState<string | null>(null);
   const [showTypingFallback, setShowTypingFallback] = useState(false);
+
+  // Language session flag: default false guarantees 100% English greetings on cold start
+  const userSpokeTamilRef = useRef<boolean>(false);
 
   const dormancyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,6 +141,7 @@ export default function MobileHomeScreen() {
       setPresenceState('DORMANT');
       setVoiceState('DORMANT');
       setFaceState('IDLE');
+      aivaVoiceService.abandonAudioFocus();
       
       // Clear message banner only after a generous reading window (6 seconds)
       setTimeout(() => {
@@ -181,6 +221,12 @@ export default function MobileHomeScreen() {
     async (commandText: string) => {
       const clean = commandText.trim();
       if (!clean) return;
+
+      // Language detection: if user speaks Tamil or Tanglish, unlock Tamil greetings
+      if (detectLanguageFromTranscript(clean)) {
+        console.log('[AIVA Multilingual] User spoke Tamil/Tanglish. Unlocking Tamil wake greetings.');
+        userSpokeTamilRef.current = true;
+      }
 
       const now = Date.now();
       if (
@@ -595,9 +641,20 @@ export default function MobileHomeScreen() {
 
       clearTimers();
       setPresenceState('ACTIVE');
-      setFaceState('LISTENING');
       setLastResponseText(null);
 
+      // Select language-gated greeting
+      const wakeAck = getRandomWakeAck(userSpokeTamilRef.current);
+      console.log(`[AIVA Wake] Acknowledgment selected (${userSpokeTamilRef.current ? 'Multilingual' : 'English-Only'}): "${wakeAck}"`);
+      setLastResponseText(wakeAck);
+
+      try {
+        await speakResponse(wakeAck);
+      } catch (err) {
+        console.warn('[AIVA Wake] Speak acknowledgment error:', err);
+      }
+
+      setFaceState('LISTENING');
       try {
         console.log('[AIVA Voice] Prompting user speech recognition...');
         await aivaVoiceService.startListening();

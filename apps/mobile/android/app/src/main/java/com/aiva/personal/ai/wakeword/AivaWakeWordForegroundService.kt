@@ -195,7 +195,7 @@ class AivaWakeWordForegroundService : Service() {
 
         return try {
             val ar = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
                 TwoStageWakeWordDetector.SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
