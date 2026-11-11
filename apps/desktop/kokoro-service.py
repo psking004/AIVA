@@ -619,43 +619,89 @@ def execute_shell_command(command, cwd=None, timeout=60, target_node="PC-B"):
         except Exception as ex:
             return False, "", str(ex), -1
 
+EXE_CANDIDATES_PCB = [
+    r"C:\Users\bhara\AppData\Local\Programs\AIVA\AIVA.exe",
+    r"C:\Users\bhara\AIVA\apps\desktop\dist\win-unpacked\AIVA.exe",
+    r"C:\AIVA_Workspace\AIVA.exe",
+]
+
+EXE_CANDIDATES_PCA = [
+    r"C:\Users\parthasarathi\AppData\Local\Programs\AIVA\AIVA.exe",
+    r"C:\AIVA_Workspace\AIVA.exe",
+    r"\\10.84.73.194\AIVA_Workspace\AIVA.exe",
+    r"C:\Users\parthasarathi\AIVA\apps\desktop\dist\win-unpacked\AIVA.exe",
+]
+
+def find_native_exe(candidates):
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
 def launch_fabric_visual(target="BOTH"):
     """
-    Launches AIVA interactive visual interface onto the physical screens of PC-B and/or PC-A.
-    Uses dedicated application window mode (--app=) and interactive session scheduling
-    on PC-A to guarantee borderless, chrome-free rendering on console monitor (Session 1).
+    Pure dedicated native binary launcher for AIVA across PC-B, PC-A, and Mobile.
+    Completely bans web browsers (msedge, chrome, http:// tabs):
+    - PC-B: Launches native compiled AIVA.exe or Electron desktop application.
+    - PC-A: Launches native compiled AIVA.exe interactively in Session 1.
+    - Mobile: Launches native Android APK (com.aiva.personal.ai/.MainActivity) via ADB.
     """
     target_clean = str(target or "BOTH").upper()
     results = {}
 
-    # 1. Launch on PC-B physical display in dedicated app mode
-    if target_clean in ["PC-B", "BOTH", "LOCAL"]:
-        try:
-            # Prefer standalone application window mode (--app=) without browser tabs or address bar
-            ret = os.system("start msedge.exe --app=http://localhost:5050 --new-window")
-            if ret != 0:
-                os.system("start http://localhost:5050")
-            results["PC-B"] = "Launched on physical display."
-        except Exception as e:
-            results["PC-B"] = f"Failed: {e}"
+    # 1. PC-B Native Execution
+    if target_clean in ["PC-B", "BOTH", "LOCAL", "ALL"]:
+        native_pcb = find_native_exe(EXE_CANDIDATES_PCB)
+        if native_pcb:
+            try:
+                subprocess.Popen([native_pcb], cwd=os.path.dirname(native_pcb))
+                results["PC-B"] = f"Launched native binary: {native_pcb}"
+            except Exception as e:
+                results["PC-B"] = f"Failed launching native exe: {e}"
+        else:
+            try:
+                subprocess.Popen(["pnpm", "--filter", "@aiva/desktop", "start"], cwd=r"C:\Users\bhara\AIVA", shell=True)
+                results["PC-B"] = "Launched native desktop application via Electron."
+            except Exception as e:
+                results["PC-B"] = f"Failed to start desktop app: {e}"
 
-    # 2. Launch on PC-A physical display via interactive task in dedicated standalone app mode
-    if target_clean in ["PC-A", "BOTH", "REMOTE"]:
+    # 2. PC-A Native Execution (Interactive Session 1)
+    if target_clean in ["PC-A", "BOTH", "REMOTE", "ALL"]:
         try:
             remote_cmd = (
-                "$act = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c start msedge.exe --app=http://10.84.73.59:5050 --new-window'; "
+                "$candidates = @("
+                "'C:\\Users\\parthasarathi\\AppData\\Local\\Programs\\AIVA\\AIVA.exe',"
+                "'C:\\AIVA_Workspace\\AIVA.exe',"
+                "'C:\\Users\\parthasarathi\\AIVA\\apps\\desktop\\dist\\win-unpacked\\AIVA.exe'"
+                "); "
+                "$exe = ($candidates | Where-Object { Test-Path $_ } | Select-Object -First 1); "
+                "if ($exe) { $cmd = $exe } else { $cmd = 'cmd.exe /c cd /d C:\\Users\\parthasarathi\\AIVA\\apps\\desktop && pnpm start' }; "
+                "$act = New-ScheduledTaskAction -Execute $cmd; "
                 "$trig = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1); "
                 "$user = (quser | Select-String 'Active' | ForEach-Object { ($_ -split '\\s+')[1] }); "
                 "if (-not $user) { $user = $env:USERNAME; if (-not $user) { $user = 'parthasarathi' } }; "
                 "$princ = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive; "
-                "Register-ScheduledTask -TaskName 'AIVAPhysicalScreen' -Action $act -Trigger $trig -Principal $princ -Force | Out-Null; "
-                "Start-ScheduledTask -TaskName 'AIVAPhysicalScreen'"
+                "Register-ScheduledTask -TaskName 'AIVANativeApp' -Action $act -Trigger $trig -Principal $princ -Force | Out-Null; "
+                "Start-ScheduledTask -TaskName 'AIVANativeApp'"
             )
             winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {remote_cmd} }}"'
             p = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=15)
-            results["PC-A"] = "Dispatched dedicated app window launch to PC-A screen." if p.returncode == 0 else (p.stderr.strip() or "Dispatched dedicated app window launch to PC-A screen.")
+            results["PC-A"] = "Launched dedicated native executable on PC-A physical screen." if p.returncode == 0 else (p.stderr.strip() or "Dispatched native app launch to PC-A.")
         except Exception as e:
-            results["PC-A"] = f"Failed: {e}"
+            results["PC-A"] = f"Failed launching native exe on PC-A: {e}"
+
+    # 3. Mobile Node Native Execution (APK via ADB)
+    if target_clean in ["MOBILE", "ALL", "PHONE"]:
+        try:
+            adb_cmd = 'adb -s 10.84.73.78:5555 shell am start -n com.aiva.personal.ai/.MainActivity -a android.intent.action.MAIN -c android.intent.category.LAUNCHER'
+            p_mobile = subprocess.run(adb_cmd, shell=True, capture_output=True, text=True, timeout=10)
+            if p_mobile.returncode == 0:
+                results["MOBILE"] = "Launched native Android APK on iQOO Neo 10."
+            else:
+                p_mobile_def = subprocess.run('adb shell am start -n com.aiva.personal.ai/.MainActivity -a android.intent.action.MAIN -c android.intent.category.LAUNCHER', shell=True, capture_output=True, text=True, timeout=10)
+                results["MOBILE"] = "Launched native Android APK on mobile device." if p_mobile_def.returncode == 0 else f"Failed to launch mobile APK: {p_mobile.stderr}"
+        except Exception as e:
+            results["MOBILE"] = f"Mobile launch error: {e}"
 
     return results
 

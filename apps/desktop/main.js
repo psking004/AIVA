@@ -65,7 +65,15 @@ try {
 }
 
 // Determine paths & persistence directories
-const USER_DATA_DIR = path.join(app.getPath('userData') || path.join(process.env.APPDATA || os.homedir(), 'AIVA'));
+let USER_DATA_DIR;
+try {
+  USER_DATA_DIR = (app && typeof app.getPath === 'function') ? app.getPath('userData') : path.join(process.env.APPDATA || os.homedir(), 'AIVA');
+} catch (_e) {
+  USER_DATA_DIR = path.join(process.env.APPDATA || os.homedir(), 'AIVA');
+}
+if (!USER_DATA_DIR) {
+  USER_DATA_DIR = path.join(process.env.APPDATA || os.homedir(), 'AIVA');
+}
 const LOG_DIR = path.join(USER_DATA_DIR, 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'aiva-desktop.log');
 const IDENTITY_FILE = path.join(USER_DATA_DIR, 'device_identity.json');

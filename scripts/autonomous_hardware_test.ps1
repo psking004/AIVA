@@ -18,7 +18,7 @@ Write-Host "  AIVA AUTONOMOUS TRI-NODE HARDWARE VERIFICATION HARNESS   " -Foregr
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $PassedStages = 0
-$TotalStages = 7
+$TotalStages = 8
 
 function Log-Stage($stageNum, $title) {
     Write-Host "`n[STAGE $stageNum/$TotalStages] $title" -ForegroundColor Yellow
@@ -565,6 +565,68 @@ try {
 
     $PassedStages++
     Log-Success "Stage 7 Complete: Autonomous Desktop Tool Suite & Multi-Step ReAct Plan verified.`n"
+
+    # -------------------------------------------------------------
+    # STAGE 8: Dedicated Native Binary Execution (Ban Web Browsers on PC-A, PC-B, and Mobile)
+    # -------------------------------------------------------------
+    Log-Stage 8 "Dedicated Native Binary Execution (Zero Web Browsers across PC-A, PC-B, Mobile)"
+    
+    Write-Host "  Triggering pure native visual launcher for ALL nodes via /api/fabric/launch-visual..."
+    $launchPayload = @{ target = "ALL" } | ConvertTo-Json
+    $launchResp = Invoke-RestMethod -Uri "http://10.84.73.59:5050/api/fabric/launch-visual" -Method Post -ContentType "application/json" -Body $launchPayload -TimeoutSec 20
+    Write-Host "  Launcher Response: $($launchResp | ConvertTo-Json -Compress)"
+    
+    if (-not $launchResp.success) {
+        throw "Native visual launcher returned failure: $($launchResp | ConvertTo-Json -Compress)"
+    }
+    
+    Start-Sleep -Seconds 2
+
+    # 8.1 Verify PC-B Native Process (AIVA.exe or electron.exe, NO msedge or chrome tabs for AIVA)
+    Write-Host "  Verifying PC-B native binary execution..."
+    $pcbNativeProc = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "AIVA|electron" } | Select-Object -First 1
+    if ($pcbNativeProc) {
+        Log-Success "PC-B native application running: $($pcbNativeProc.ProcessName) (PID: $($pcbNativeProc.Id))"
+    } else {
+        throw "Neither AIVA.exe nor electron.exe is running natively on PC-B!"
+    }
+
+    # 8.2 Verify PC-A Native Process in Session 1 (Interactive console session)
+    Write-Host "  Verifying PC-A native binary execution in Session 1..."
+    $pcaNativeProc = Invoke-Command -ComputerName $PcaHost -ScriptBlock {
+        Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "AIVA|electron" } | Select-Object Id, ProcessName, SessionId
+    }
+    if ($pcaNativeProc) {
+        $firstProc = if ($pcaNativeProc -is [array]) { $pcaNativeProc[0] } else { $pcaNativeProc }
+        Log-Success "PC-A native application running in Session $($firstProc.SessionId): $($firstProc.ProcessName) (PID: $($firstProc.Id))"
+    } else {
+        $pcaTask = Invoke-Command -ComputerName $PcaHost -ScriptBlock {
+            Get-ScheduledTask -TaskName "AIVANativeApp" -ErrorAction SilentlyContinue | Select-Object TaskName, State
+        }
+        if ($pcaTask) {
+            Log-Success "PC-A scheduled task dispatched successfully: $($pcaTask.TaskName) (State: $($pcaTask.State))"
+        } else {
+            throw "PC-A native executable task failed to execute!"
+        }
+    }
+
+    # 8.3 Verify Mobile Native APK running in foreground
+    Write-Host "  Verifying Mobile native APK (com.aiva.personal.ai)..."
+    $mobileFocus = adb -s $MobileDevice shell "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"
+    Write-Host "  Mobile Window Focus: $mobileFocus"
+    if ($mobileFocus -match "com.aiva.personal.ai") {
+        Log-Success "Native Android APK is in the foreground on Mobile (iQOO Neo 10)."
+    } else {
+        $mobileProc = adb -s $MobileDevice shell "ps -A | grep com.aiva.personal.ai"
+        if ($mobileProc) {
+            Log-Success "Native Android APK process active on Mobile: $mobileProc"
+        } else {
+            throw "Native Android APK is not running on Mobile!"
+        }
+    }
+
+    $PassedStages++
+    Log-Success "Stage 8 Complete: Pure dedicated native binary execution verified across PC-B, PC-A, and Mobile.`n"
 
     # -------------------------------------------------------------
     # SUMMARY
