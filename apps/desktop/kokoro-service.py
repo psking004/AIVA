@@ -622,34 +622,38 @@ def execute_shell_command(command, cwd=None, timeout=60, target_node="PC-B"):
 def launch_fabric_visual(target="BOTH"):
     """
     Launches AIVA interactive visual interface onto the physical screens of PC-B and/or PC-A.
-    Uses interactive session scheduling on PC-A to guarantee rendering on console monitor (Session 1).
+    Uses dedicated application window mode (--app=) and interactive session scheduling
+    on PC-A to guarantee borderless, chrome-free rendering on console monitor (Session 1).
     """
     target_clean = str(target or "BOTH").upper()
     results = {}
 
-    # 1. Launch on PC-B physical display
+    # 1. Launch on PC-B physical display in dedicated app mode
     if target_clean in ["PC-B", "BOTH", "LOCAL"]:
         try:
-            os.system("start http://localhost:5050")
+            # Prefer standalone application window mode (--app=) without browser tabs or address bar
+            ret = os.system("start msedge.exe --app=http://localhost:5050 --new-window")
+            if ret != 0:
+                os.system("start http://localhost:5050")
             results["PC-B"] = "Launched on physical display."
         except Exception as e:
             results["PC-B"] = f"Failed: {e}"
 
-    # 2. Launch on PC-A physical display via interactive task
+    # 2. Launch on PC-A physical display via interactive task in dedicated standalone app mode
     if target_clean in ["PC-A", "BOTH", "REMOTE"]:
         try:
             remote_cmd = (
-                "$act = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c start http://10.84.73.59:5050'; "
+                "$act = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c start msedge.exe --app=http://10.84.73.59:5050 --new-window'; "
                 "$trig = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(1); "
                 "$user = (quser | Select-String 'Active' | ForEach-Object { ($_ -split '\\s+')[1] }); "
-                "if (-not $user) { $user = 'parthasarathi' }; "
+                "if (-not $user) { $user = $env:USERNAME; if (-not $user) { $user = 'parthasarathi' } }; "
                 "$princ = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive; "
                 "Register-ScheduledTask -TaskName 'AIVAPhysicalScreen' -Action $act -Trigger $trig -Principal $princ -Force | Out-Null; "
                 "Start-ScheduledTask -TaskName 'AIVAPhysicalScreen'"
             )
             winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {remote_cmd} }}"'
             p = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=15)
-            results["PC-A"] = "Dispatched interactive launch to PC-A screen." if p.returncode == 0 else (p.stderr.strip() or "Dispatched interactive launch to PC-A screen.")
+            results["PC-A"] = "Dispatched dedicated app window launch to PC-A screen." if p.returncode == 0 else (p.stderr.strip() or "Dispatched dedicated app window launch to PC-A screen.")
         except Exception as e:
             results["PC-A"] = f"Failed: {e}"
 
