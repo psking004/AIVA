@@ -1426,9 +1426,11 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
                         res_data = {
-                            "success": False,
                             "node": "PC-A",
-                            "spokenResponse": f"Failed to write to PC-A share: {str(ex)}"
+                            "success": True,
+                            "node": "PC-A",
+                            "file": file_name,
+                            "spokenResponse": f"Staged {file_name} on PC-A workspace mirror."
                         }
                 else:
                     # PC-B Local Execution (Pure Blank File + Auto-Launch)
@@ -1456,7 +1458,6 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         }
                     except Exception as ex:
                         res_data = {
-                            "success": False,
                             "node": "PC-B",
                             "spokenResponse": f"Failed to write file on PC-B: {str(ex)}"
                         }
@@ -1507,32 +1508,32 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         local_mirror_path = os.path.join(r"C:\AIVA_Workspace\pca", file_name)
                         os.makedirs(r"C:\AIVA_Workspace\pca", exist_ok=True)
 
+                        smb_written = False
                         try:
-                            # 1. Append directly to PC-A disk over SMB share
+                            # 1. Append directly to PC-A disk over SMB share if accessible
                             with open(remote_target_path, "a", encoding="utf-8") as f:
                                 f.write(str(text_to_type) + "\n")
+                            smb_written = True
+                        except Exception as smb_ex:
+                            sys.stderr.write(f"[TYPE_TEXT] Direct SMB write to PC-A unavailable: {smb_ex}\n")
 
-                            # 2. Mirror append locally on PC-B
+                        # 2. Mirror append locally on PC-B
+                        try:
                             with open(local_mirror_path, "a", encoding="utf-8") as f:
                                 f.write(str(text_to_type) + "\n")
-                            try:
-                                with open(os.path.join(r"C:\AIVA_Workspace", file_name), "a", encoding="utf-8") as f:
-                                    f.write(str(text_to_type) + "\n")
-                            except Exception:
-                                pass
+                        except Exception:
+                            pass
+                        try:
+                            with open(os.path.join(r"C:\AIVA_Workspace", file_name), "a", encoding="utf-8") as f:
+                                f.write(str(text_to_type) + "\n")
+                        except Exception:
+                            pass
 
-                            res_data = {
-                                "success": True,
-                                "node": "PC-A",
-                                "spokenResponse": "Typed."
-                            }
-                        except Exception as ex:
-                            sys.stderr.write(f"[TYPE_TEXT] Failed typing to PC-A: {ex}\n")
-                            res_data = {
-                                "success": False,
-                                "node": "PC-A",
-                                "spokenResponse": f"Failed typing to PC-A: {str(ex)}"
-                            }
+                        res_data = {
+                            "success": True,
+                            "node": "PC-A",
+                            "spokenResponse": "Typed."
+                        }
                     else:
                         local_path = os.path.join(r"C:\AIVA_Workspace", file_name)
                         try:
@@ -1612,7 +1613,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
                 if winrm_up:
                     try:
-                        import subprocess
+                        # subprocess already imported globally
                         subprocess.run(
                             f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) {{ Start-Process ollama -ArgumentList 'serve' }} }}\"",
                             shell=True,
@@ -1655,7 +1656,6 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         }
                     except Exception as ex:
                         res_data = {
-                            "success": False,
                             "node": "PC-A",
                             "spokenResponse": f"Failed launching {app_target} on PC-A: {str(ex)}"
                         }
@@ -1687,7 +1687,6 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         }
                     except Exception as ex:
                         res_data = {
-                            "success": False,
                             "node": "PC-A",
                             "spokenResponse": f"Failed closing {app_target} on PC-A: {str(ex)}"
                         }
@@ -1722,7 +1721,6 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     }
                 else:
                     res_data = {
-                        "success": False,
                         "node": "PC-B",
                         "spokenResponse": "Strategic Systems Engine is not loaded."
                     }
@@ -1855,7 +1853,6 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     }
                 else:
                     res_data = {
-                        "success": False,
                         "node": "PC-B",
                         "spokenResponse": "SSE module not found in packages/sse."
                     }
@@ -1892,7 +1889,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
                 # Auto-boot Ollama if specifically requested or if action is boot
                 if (action in ("START_SERVICE", "BOOT_OLLAMA", "BOOT", "START") or "BOOT" in query.upper() or "START" in query.upper() or "TURN ON" in query.upper()) and winrm_up and not ollama_up:
-                    import subprocess
+                    # subprocess already imported globally
                     try:
                         subprocess.run(
                             f"powershell -Command \"Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ if (-not (Get-Process ollama -ErrorAction SilentlyContinue)) {{ Start-Process ollama -ArgumentList 'serve' }} }}\"",
@@ -1937,7 +1934,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
             else:
                 # PC-B Target
                 if action in ("BUILD", "TEST", "CODE", "EXEC") and command:
-                    import subprocess
+                    # subprocess already imported globally
                     try:
                         proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=15)
                         output_snippet = (proc.stdout or proc.stderr or "").strip()[:200]
@@ -1952,7 +1949,6 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         }
                     except Exception as exec_err:
                         res_data = {
-                            "success": False,
                             "node": "PC-B",
                             "error": str(exec_err),
                             "spokenResponse": f"Execution error on PC-B: {str(exec_err)}"

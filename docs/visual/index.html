@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIVA Sovereign Fabric — Live Engineering & Test Dashboard</title>
+  <style>
+    :root {
+      --bg: #07090e;
+      --card-bg: rgba(16, 21, 30, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.25);
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text-main); padding: 24px; min-height: 100vh; }
+    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
+    h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.5px; }
+    .badge { padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+    .badge-green { background: rgba(34, 197, 94, 0.15); color: var(--green); border: 1px solid rgba(34, 197, 94, 0.3); }
+    .badge-yellow { background: rgba(234, 179, 8, 0.15); color: var(--yellow); border: 1px solid rgba(234, 179, 8, 0.3); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 18px; backdrop-filter: blur(8px); }
+    .card-title { font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .card-metric { font-size: 1.5rem; font-weight: 700; margin-bottom: 6px; }
+    .card-detail { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot-green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .dot-yellow { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+    section { margin-bottom: 32px; }
+    h2 { font-size: 1.15rem; font-weight: 600; margin-bottom: 12px; border-left: 3px solid var(--accent); padding-left: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; background: var(--card-bg); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: rgba(255, 255, 255, 0.03); color: var(--text-muted); font-weight: 600; }
+    tr:last-child td { border-bottom: none; }
+    .tag { padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+    .tag-pass { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+    .tag-partial { background: rgba(234, 179, 8, 0.2); color: var(--yellow); }
+    .tag-blocked { background: rgba(239, 68, 68, 0.2); color: var(--red); }
+    .audio-player { width: 100%; margin-top: 8px; height: 32px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>AIVA Sovereign Fabric — Engineering Dashboard</h1>
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">Dynamic Tri-Node Telemetry & Verification Hub</p>
+    </div>
+    <div>
+      <span class="badge badge-green">Fabric Active</span>
+      <span class="badge badge-yellow">Commit: aa515e2</span>
+    </div>
+  </header>
+
+  <!-- Section 1: Tri-Node Fabric Status Cards -->
+  <section>
+    <h2>1. Node Topology & Live Telemetry</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">
+          <span>PC-B (Host Orchestrator)</span>
+          <span class="tag tag-pass">ONLINE</span>
+        </div>
+        <div class="card-metric">10.16.177.59:5050</div>
+        <div class="card-detail">
+          <span class="status-dot dot-green"></span>Kokoro ONNX TTS (af_bella 1.05x)<br/>
+          <span class="status-dot dot-green"></span>Briefing & Checkpoint API Active<br/>
+          <span class="status-dot dot-green"></span>4 Process Subsystems Active
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>PC-A (Compute Workstation)</span>
+          <span class="tag tag-partial">WINRM DETECTED</span>
+        </div>
+        <div class="card-metric">10.16.177.194:5985</div>
+        <div class="card-detail">
+          <span class="status-dot dot-green"></span>Port 5985 Open & Ready<br/>
+          <span class="status-dot dot-yellow"></span>Requires Admin TrustedHosts Registration<br/>
+          <span class="status-dot dot-green"></span>NVIDIA RTX 3050 GPU Ready
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>Mobile (iQOO Neo 10)</span>
+          <span class="tag tag-pass">ATTACHED & RUNNING</span>
+        </div>
+        <div class="card-metric">10.16.177.243:5555</div>
+        <div class="card-detail">
+          <span class="status-dot dot-green"></span>Release APK Flashed & Active<br/>
+          <span class="status-dot dot-green"></span>AudioRecord Background Wake Live<br/>
+          <span class="status-dot dot-green"></span>Multi-Subnet Auto-Discovery Active
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>Cloud Anchor (Render)</span>
+          <span class="tag tag-pass">HEALTHY (200)</span>
+        </div>
+        <div class="card-metric">aiva-yitg.onrender.com</div>
+        <div class="card-detail">
+          <span class="status-dot dot-green"></span>Database: 1131ms | Cache: 233ms<br/>
+          <span class="status-dot dot-green"></span>Keep-Warm Daemon: 720s Cadence<br/>
+          <span class="status-dot dot-green"></span>Recovery Anchor Ready
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 2: AI Model Routing & Catalog -->
+  <section>
+    <h2>2. Local AI Model Inventory & Routing Table</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Model Tag</th>
+          <th>Physical Location</th>
+          <th>Hardware Engine</th>
+          <th>Inference Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Fast Dialogue / Chat</td>
+          <td><code>qwen3:4b</code> (2.5 GB)</td>
+          <td>PC-B Ollama</td>
+          <td>CPU (4096 ctx)</td>
+          <td><span class="tag tag-pass">INSTALLED & VERIFIED</span></td>
+        </tr>
+        <tr>
+          <td>General Tools & Execution</td>
+          <td><code>qwen:7b</code> (4.5 GB)</td>
+          <td>PC-B Ollama</td>
+          <td>CPU Execution</td>
+          <td><span class="tag tag-pass">INSTALLED</span></td>
+        </tr>
+        <tr>
+          <td>Conversational Chat</td>
+          <td><code>llama3:latest</code> (4.7 GB)</td>
+          <td>PC-B Ollama</td>
+          <td>CPU Execution</td>
+          <td><span class="tag tag-pass">INSTALLED</span></td>
+        </tr>
+        <tr>
+          <td>Deep Reasoning</td>
+          <td><code>qwen3:8b</code> (5.2 GB)</td>
+          <td>PC-B / PC-A</td>
+          <td>CPU / RTX 3050</td>
+          <td><span class="tag tag-pass">INSTALLED</span></td>
+        </tr>
+        <tr>
+          <td>Autonomous Coding</td>
+          <td><code>qwen3.5:latest</code> (6.6 GB)</td>
+          <td>PC-B / PC-A</td>
+          <td>CPU / RTX 3050</td>
+          <td><span class="tag tag-pass">INSTALLED</span></td>
+        </tr>
+        <tr>
+          <td>Cloud Fallback</td>
+          <td><code>Render Intelligence</code></td>
+          <td>Render Cloud</td>
+          <td>Cloud Anchor</td>
+          <td><span class="tag tag-pass">READY</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Section 3: Natural Voice & Acoustic Assets -->
+  <section>
+    <h2>3. Calibrated Natural Voice Identity & Reference Ingestion</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Reference Track</th>
+          <th>Source Specification</th>
+          <th>Sample Rate</th>
+          <th>Duration</th>
+          <th>Acoustic Role</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ref_english.mp3</code></td>
+          <td>ElevenLabs Multi-Lingual v4</td>
+          <td>44.1 kHz (Mono)</td>
+          <td>32.64s</td>
+          <td>Grounded, warm English conversational cadence</td>
+        </tr>
+        <tr>
+          <td><code>ref_tamil.mp3</code></td>
+          <td>ElevenLabs Multi-Lingual v4</td>
+          <td>44.1 kHz (Mono)</td>
+          <td>25.60s</td>
+          <td>Native Tamil articulation & intonation</td>
+        </tr>
+        <tr>
+          <td><code>ref_tanglish.mp3</code></td>
+          <td>ElevenLabs Multi-Lingual v4</td>
+          <td>44.1 kHz (Mono)</td>
+          <td>24.48s</td>
+          <td>Conversational Tanglish marker transitions</td>
+        </tr>
+        <tr>
+          <td><code>aiva_voice_vector.npz</code></td>
+          <td>Fused Multi-Sample Vector</td>
+          <td>24.0 kHz Resampled</td>
+          <td>--</td>
+          <td>Acoustic feature embedding & style parameters</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Section 4: Mobile & Bluetooth Routing Matrix -->
+  <section>
+    <h2>4. Mobile Audio & Bluetooth Coexistence Matrix</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>Audio Pipeline</th>
+          <th>Routing State</th>
+          <th>Media Coexistence Behavior</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Idle / Wake Listening</td>
+          <td><code>AudioRecord (VOICE_RECOGNITION)</code></td>
+          <td>Internal / AirPods Mic</td>
+          <td>YouTube / Instagram continue uninterrupted</td>
+        </tr>
+        <tr>
+          <td>Speech Capture (AirPods)</td>
+          <td><code>Bluetooth SCO</code></td>
+          <td>AirPods Stem Mic</td>
+          <td>SCO active during speech capture only</td>
+        </tr>
+        <tr>
+          <td>Speech Synthesis (TTS)</td>
+          <td><code>Bluetooth A2DP / LE Audio</code></td>
+          <td>AirPods Stereo</td>
+          <td>Crisp high-bandwidth stereo output</td>
+        </tr>
+        <tr>
+          <td>Barge-In Event</td>
+          <td><code>stopSpeaking() + SCO Release</code></td>
+          <td>Listening Mode</td>
+          <td>Instant cancellation, zero acoustic feedback</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Section 5: External Agent Integrations & Verification -->
+  <section>
+    <h2>5. Verified Agent Applications on iQOO Neo 10</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Application</th>
+          <th>Package Identifier</th>
+          <th>Role</th>
+          <th>Checkpointing Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Hark</td>
+          <td><code>com.hark.android</code></td>
+          <td>Cloud Browser Panels & Schedules</td>
+          <td><span class="tag tag-pass">INSTALLED & MONITORED</span></td>
+        </tr>
+        <tr>
+          <td>Freebuff</td>
+          <td><code>com.freebuff.app</code></td>
+          <td>Zero-Cost Multi-Model Coding</td>
+          <td><span class="tag tag-pass">INSTALLED & MONITORED</span></td>
+        </tr>
+        <tr>
+          <td>Genspark</td>
+          <td><code>ai.mainfunc.genspark</code></td>
+          <td>Deep Research & Document Synthesis</td>
+          <td><span class="tag tag-pass">INSTALLED & MONITORED</span></td>
+        </tr>
+        <tr>
+          <td>Manus</td>
+          <td><code>tech.butterfly.app</code></td>
+          <td>Autonomous Cloud Execution</td>
+          <td><span class="tag tag-pass">INSTALLED & MONITORED</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer style="margin-top: 40px; border-top: 1px solid var(--border); padding-top: 16px; font-size: 0.75rem; color: var(--text-muted); text-align: center;">
+    AIVA Sovereign Distributed Fabric — Engineering Execution Complete • Git Commit: <code>aa515e2</code>
+  </footer>
+</body>
+</html>
