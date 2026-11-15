@@ -34,3 +34,4 @@
    * **Manus Computer Use:** Manus features visual mouse cursor coordinate streaming and multi-tab browser sandboxing, whereas AIVA currently operates via DOM/HTTP extraction and PowerShell terminal sandboxing.
    * **Lovable Frontend Polish:** Lovable compiles and renders full React/Tailwind visual frontends with live preview in seconds.
    * **OpenAI Advanced Voice Mode:** End-to-end speech-to-speech neural audio produces emotional laughs and breathing nuances beyond modular TTS/ASR.
+

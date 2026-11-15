@@ -96,3 +96,4 @@ Execution is never considered complete until independently verified:
 * **PC-A:** Remote heavy compute, Voice Vector mirror, secondary Ollama inference over WinRM / HTTP.
 * **iQOO Neo 10 Mobile:** Edge microphone capture, local wake-word listener, dynamic subnet auto-discovery (`10.16.177.x`), daily audio briefing harvester.
 * **Cloud Nodes:** Render keep-warm server (`https://aiva-yitg.onrender.com`), OpenRouter/Gemini API fallbacks.
+

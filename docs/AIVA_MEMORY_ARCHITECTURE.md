@@ -24,3 +24,4 @@ graph TD
 3. **Long-Term Preferences:** Persisted to `preferences.json`. Stores communication style (`warm_direct_intelligent`), voice profile (`af_bella` @ 1.05), and language preferences (`["en-US", "ta-IN", "tanglish"]`).
 4. **Project Memory:** Persisted to `project_memory.json`. Stores repository roots, hardware node topology, and architectural decisions.
 5. **Task Execution Memory:** Retains complete task history in `task_ledger.jsonl`.
+

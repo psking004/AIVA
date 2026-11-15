@@ -138,3 +138,4 @@ class MemoryManager:
                 "user_preferences": self.long_term_prefs,
                 "project_environment": self.project_memory,
             }
+

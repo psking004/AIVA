@@ -36,3 +36,4 @@ Agents communicate via typed asynchronous messages (`SwarmMessage`):
 * `RESULT_SUBMISSION`: Agent publishes verified output.
 * `FAILURE_NOTIFICATION`: Agent signals error with stack trace.
 * `INTERRUPT`: Priority cancellation token propagated to active workers.
+

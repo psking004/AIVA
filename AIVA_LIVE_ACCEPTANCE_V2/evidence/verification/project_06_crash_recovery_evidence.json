@@ -1,0 +1,19 @@
+{
+  "task_id": "task_6045eef73c07",
+  "interrupted_state": "EXECUTING",
+  "recovery_state": "RECOVERING",
+  "retries_count": 1,
+  "final_status": "COMPLETED",
+  "history_transitions": [
+    "RECEIVED",
+    "UNDERSTANDING",
+    "PLANNING",
+    "EXECUTING",
+    "RECOVERING",
+    "EXECUTING",
+    "VERIFYING",
+    "COMPLETED"
+  ],
+  "duplicate_side_effects": false,
+  "verification_status": "PASS"
+}

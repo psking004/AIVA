@@ -220,3 +220,4 @@ if __name__ == "__main__":
     execute_project_07()
     execute_project_08()
     print("\n✅ PROJECTS 7 & 8 (RESEARCH & DATA PRODUCTIVITY) VERIFIED SUCCESSFULLY.")
+

@@ -29,3 +29,4 @@ The request asked AIVA to:
 3. **Hardware Execution Evidence:**
    * Live physical device screen captured via ADB: `AIVA_LIVE_ACCEPTANCE/evidence/screenshots/android_dailyflow_screen.png` (2,795,818 bytes).
    * Verification JSON saved to `AIVA_LIVE_ACCEPTANCE/evidence/verification/project_03_android_evidence.json`.
+

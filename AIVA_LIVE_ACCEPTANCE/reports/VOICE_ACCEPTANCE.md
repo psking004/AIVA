@@ -31,3 +31,4 @@ The request asked AIVA to test:
    * Exactly 1 authoritative avatar window active.
 3. **Evidence Artifact:**
    * Saved in `AIVA_LIVE_ACCEPTANCE/evidence/voice_measurements/voice_pipeline_measurements.json` and `project_09_voice_evidence.json`.
+

@@ -19,3 +19,4 @@
 * **Local Ollama Inference Engine:** Active on `http://127.0.0.1:11434`
 * **ADB Server:** Active, managing physical USB & Wi-Fi bridges
 * **Execution Role:** Preferred Master Orchestrator, Planning Engine, Local Fast-Path LLM, UI Avatar HUD
+

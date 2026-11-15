@@ -49,3 +49,4 @@ AIVA_LIVE_ACCEPTANCE/
 ```
 
 All operations were executed live on physical hardware and local models with zero simulation.
+

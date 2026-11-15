@@ -36,3 +36,4 @@
 * **ADB USB Bridge:** `10BF6B1T1C001BS` (Authorized, Device mode)
 * **ADB Wi-Fi Bridge:** `10.16.177.243:5555` (Authorized, Device mode)
 * **AIVA App Package:** `com.aiva.personal.ai`
+

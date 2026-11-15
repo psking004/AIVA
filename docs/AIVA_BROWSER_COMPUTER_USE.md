@@ -26,3 +26,4 @@
   * `shutdown`
   * `reg delete`
 * **Real Verification Evidence:** Benchmark C verified real browser fetch (status code 200) and real PowerShell command execution while blocking forbidden commands.
+

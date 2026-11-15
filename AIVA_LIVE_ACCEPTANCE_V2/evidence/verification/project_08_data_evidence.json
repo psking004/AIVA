@@ -1,0 +1,18 @@
+{
+  "project": "PROJECT_08_REAL_DATA_ANALYSIS",
+  "total_spend": 566.8,
+  "avg_spend": 80.97,
+  "node_breakdown": {
+    "PC-B_Local": 141.8,
+    "PC-A_Cluster": 425.0,
+    "Render_Cloud": 0.0
+  },
+  "anomalies": [
+    {
+      "node": "PC-A_Cluster",
+      "month": "2026-02",
+      "issue": "Missing Cost_USD"
+    }
+  ],
+  "status": "PASS"
+}

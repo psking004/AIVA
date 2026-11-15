@@ -1,0 +1,64 @@
+{
+  "project_10_security": {
+    "path_traversal_prevention": [
+      {
+        "path": "../../Windows/System32/calc.exe",
+        "blocked": true
+      },
+      {
+        "path": "../..",
+        "blocked": true
+      },
+      {
+        "path": "C:\\Windows\\win.ini",
+        "blocked": true
+      }
+    ],
+    "destructive_command_interception": [
+      {
+        "command": "format C:",
+        "blocked": true
+      },
+      {
+        "command": "del /s /q c:\\",
+        "blocked": true
+      },
+      {
+        "command": "rmdir /s /q c:\\",
+        "blocked": true
+      },
+      {
+        "command": "shutdown /s /t 0",
+        "blocked": true
+      },
+      {
+        "command": "reg delete HKLM\\Software",
+        "blocked": true
+      }
+    ],
+    "ast_syntax_quarantine": {
+      "blocked_invalid_syntax": true
+    }
+  },
+  "project_11_swarm": {
+    "task_id": "task_df3de41f6666",
+    "strategy": "sequential",
+    "assigned_agents": [
+      "agent_strategic_planner",
+      "agent_researcher",
+      "agent_reviewer"
+    ],
+    "trace_steps": 7,
+    "verification_verdict": {
+      "verified": true,
+      "confidence_score": 1.0,
+      "checks_passed": [
+        "REPORTED_SUCCESS"
+      ],
+      "checks_failed": [],
+      "audit_notes": "Verified 1 checks. 0 failures flagged."
+    },
+    "latency_ms": 1075.33,
+    "status": "PASS"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "scenario_a": {
+    "description": "PC-B dispatch to PC-A remote compute via WinRM",
+    "target_node": "PC-A (10.16.177.194:5985)",
+    "verified": true,
+    "latency_ms": 459.56
+  },
+  "scenario_b": {
+    "description": "Task state preservation across node handover",
+    "task_id": "task_5ec805445c90",
+    "persisted_state": "COMPLETED",
+    "verified": true
+  },
+  "scenario_c": {
+    "description": "Mobile initiation via ADB intent broadcast",
+    "device_id": "10BF6B1T1C001BS",
+    "broadcast_result": "Broadcasting: Intent { act=com.aiva.personal.ai.TEST_PING flg=0x400000 }\nBroadcast completed: result",
+    "latency_ms": 226.5,
+    "verified": true
+  },
+  "scenario_d": {
+    "description": "Dual-channel mobile connectivity (USB and Wi-Fi)",
+    "usb_state": "device",
+    "wifi_state": "device",
+    "verified": true
+  },
+  "scenario_e": {
+    "description": "Safe fallback on remote node timeout",
+    "isolated_within_ms": 310.99,
+    "degradation_handled": true,
+    "verified": true
+  }
+}

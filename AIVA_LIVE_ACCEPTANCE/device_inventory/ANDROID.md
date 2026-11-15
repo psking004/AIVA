@@ -11,3 +11,4 @@
 **Foreground Service:** `AivaWakeWordForegroundService`  
 **Audio Architecture:** Unmanaged audio focus routing (coexists with media/YouTube/calls)  
 **Status:** **ONLINE & ATTACHED**  
+

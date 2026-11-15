@@ -12,3 +12,4 @@
 3. **Solver Performance:** SSE game-theoretic utility scores, risk bounds, and solve times.
 4. **Hardware & Model Telemetry:** Model query latencies, provider health, memory consumption.
 5. **Disk Event Logs:** Real-time persistence to `docs/visual/swarm-telemetry.json` and `backend/data/tasks/task_ledger.jsonl`.
+

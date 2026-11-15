@@ -64,3 +64,4 @@ AIVA 2.0 was subjected to the complete 8-part capability benchmark suite (Benchm
 * **Input:** Simulate ungraceful process crash mid-execution, trigger recovery, and resume to completion.
 * **Evidence:** Interrupted task detected, moved to `RECOVERING`, retry count incremented to 1, resumed to `EXECUTING` and `COMPLETED`.
 * **Verdict:** PASS.
+

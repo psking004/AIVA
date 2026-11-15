@@ -28,3 +28,4 @@ The request asked AIVA to:
    * Real browser navigation via `BrowserTool`: HTTP `200 OK`, Title: `AIVA Personal Expense Tracker`.
 4. **Independent Evidence:**
    * Captured in `AIVA_LIVE_ACCEPTANCE/evidence/verification/project_01_pc_a_evidence.json`.
+

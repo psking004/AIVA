@@ -279,3 +279,4 @@ class TaskLifecycleEngine:
         if recovered:
             logger.info(f"Recovered {len(recovered)} interrupted tasks: {recovered}")
         return recovered
+

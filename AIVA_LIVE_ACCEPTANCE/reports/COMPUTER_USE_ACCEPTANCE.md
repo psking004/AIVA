@@ -25,3 +25,4 @@ The request asked AIVA to:
    * Saved full comparative markdown report to `AIVA_LIVE_ACCEPTANCE/projects/PROJECT_05_BROWSER_RESEARCH/comparison_report.md`.
 3. **Evidence Artifact:**
    * `AIVA_LIVE_ACCEPTANCE/evidence/verification/project_05_browser_evidence.json`.
+

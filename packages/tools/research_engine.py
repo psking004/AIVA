@@ -131,3 +131,4 @@ class ResearchEngine:
             "total_latency_ms": total_time,
             "verified": len(sources_collected) > 0,
         }
+

@@ -31,3 +31,4 @@ flowchart LR
 * `qwen3:8b` (5.23 GB) — Complex logic & tool argument verification
 * `qwen3.5:latest` (6.59 GB) — Software engineering & multi-file coding
 * `sorc/qwen3.5-claude-4.6-opus-q4:latest` (6.59 GB) — Deep autonomous synthesis
+

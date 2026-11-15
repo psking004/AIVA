@@ -101,3 +101,4 @@ class BrowserTool:
         except Exception as e:
             dur = round((time.time() - start_t) * 1000, 2)
             return {"success": False, "status_code": -1, "error": str(e), "latency_ms": dur}
+

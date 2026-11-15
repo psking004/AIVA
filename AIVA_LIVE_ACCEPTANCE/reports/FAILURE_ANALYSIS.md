@@ -24,3 +24,4 @@
 * **Symptom:** Previous mobile service iterations hijacked Android audio focus, silencing media players (YouTube, Instagram) and phone calls.
 * **Root Cause:** Exclusive `AUDIOFOCUS_GAIN` was requested on microphone open.
 * **Resolution:** Switched to unmanaged audio recording with `VOICE_RECOGNITION` audio source in `AivaWakeWordForegroundService.kt`. Verified audio coexistence on physical iQOO Neo 10 device.
+

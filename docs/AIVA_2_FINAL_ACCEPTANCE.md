@@ -34,3 +34,4 @@
 ## 2. Conclusion
 
 AIVA 2.0 has transformed from a collection of reactive scripts into a unified, autonomous, multimodal intelligence and execution platform. Every tool executes real actions on the system; every benchmark is supported by reproducible evidence on disk; and the conversational interface delivers a natural, zero-lag voice experience with full-duplex barge-in.
+

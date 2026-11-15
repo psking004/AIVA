@@ -8,3 +8,4 @@
 * **445 / TCP:** Microsoft-DS (SMB File Sharing) — Port open.
 **Status:** **ONLINE & RESPONSIVE**  
 **Role in AIVA Fabric:** Dedicated Compute Node, Secondary LLM Inference, Voice Vector Mirror  
+

@@ -19,3 +19,4 @@
 
 ## 2. Evidence Artifact
 Saved in `AIVA_LIVE_ACCEPTANCE/evidence/verification/project_10_resilience_evidence.json`.
+

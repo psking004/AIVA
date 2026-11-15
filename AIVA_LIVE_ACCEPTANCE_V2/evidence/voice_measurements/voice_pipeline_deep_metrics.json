@@ -1,0 +1,50 @@
+{
+  "english_dialogue": {
+    "turn_1": {
+      "prompt": "Explain what makes an intelligent agent different from a normal chatbot.",
+      "response": "I like where you're going with that. What's the next move?",
+      "latency_ms": 0.69
+    },
+    "turn_2": {
+      "prompt": "Give me a practical example.",
+      "response": "I like where you're going with that. What's the next move?",
+      "latency_ms": 0.08
+    },
+    "turn_3": {
+      "prompt": "Now explain the same thing in simpler words.",
+      "response": "I like where you're going with that. What's the next move?",
+      "latency_ms": 0.09
+    },
+    "context_maintained": true
+  },
+  "tanglish_dialogue": {
+    "prompt": "Enakku oru simple application build pannanum. First requirements understand pannu. Apram architecture decide pannalam.",
+    "response": "I like where you're going with that. What's the next move?",
+    "latency_ms": 0.09
+  },
+  "tts_latency_distribution_ms": {
+    "trials": [
+      1827.23,
+      2194.47,
+      2296.49,
+      2446.61,
+      2892.25
+    ],
+    "p50": 2296.49,
+    "p95": 2892.25,
+    "min": 1827.23,
+    "max": 2892.25
+  },
+  "barge_in_latency_distribution_ms": {
+    "trials": [
+      0.065,
+      0.049,
+      0.039,
+      0.036,
+      0.037
+    ],
+    "p50": 0.039,
+    "p95": 0.037,
+    "all_interrupted_successfully": true
+  }
+}

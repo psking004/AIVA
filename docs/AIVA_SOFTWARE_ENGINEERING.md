@@ -24,3 +24,4 @@ In Benchmark D, `CodeEngine`:
 * Wrote 73 bytes with diff generation
 * Read back and verified content matches on disk
 * Cleaned up scratch artifacts with zero disk residue.
+

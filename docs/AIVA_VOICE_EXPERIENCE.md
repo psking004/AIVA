@@ -13,3 +13,4 @@ In AIVA 2.0, the traditional 4-5 second full-paragraph synthesis delay is elimin
 3. **Audio-Text Synchronization:** Text reveal is synchronized strictly on `audio.onplay()`, ensuring exactly **0 ms gap** between spoken speech and visible text captions.
 4. **Instant Barge-In:** `BargeInController` handles user voice interruptions or spacebar presses in `<10 ms`, immediately halting active audio streams and unblocking the microphone.
 5. **Multilingual & Tanglish:** Full comprehension of Tamil, Tanglish, and English with automatic dialect switching.
+

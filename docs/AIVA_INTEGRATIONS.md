@@ -24,3 +24,4 @@ AIVA 2.0 provides typed abstractions and permission boundaries for personal tool
    * **Role:** Generalist autonomous agent operating full desktop GUI environments and browsers.
    * **Auth Key:** `MANUS_API_KEY`
    * **Status:** Ready for API key binding.
+

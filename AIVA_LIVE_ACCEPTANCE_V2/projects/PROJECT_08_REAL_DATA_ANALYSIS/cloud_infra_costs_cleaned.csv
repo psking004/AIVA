@@ -1,0 +1,9 @@
+ServiceNode,Month,Category,Cost_USD,Uptime_Pct,Notes,IntegrityStatus
+PC-B_Local,2026-01,Inference_Electricity,42.50,99.98,Continuous Ollama idle,VALID
+PC-A_Cluster,2026-01,GPU_Compute,185.00,99.50,Heavy batch jobs,VALID
+Render_Cloud,2026-01,Web_Service,0.00,99.90,Free tier keep-warm,VALID
+PC-B_Local,2026-02,Inference_Electricity,48.20,99.95,Increased conversational turns,VALID
+PC-A_Cluster,2026-02,GPU_Compute,,95.00,Missing invoice data,ANOMALY_MISSING_VALUE
+Render_Cloud,2026-02,Web_Service,0.00,99.85,Free tier keep-warm,VALID
+PC-B_Local,2026-03,Inference_Electricity,51.10,99.99,AIVA 2.0 full deployment,VALID
+PC-A_Cluster,2026-03,GPU_Compute,240.00,99.80,Multi-agent swarm runs,VALID

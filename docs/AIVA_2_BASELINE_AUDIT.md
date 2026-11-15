@@ -90,3 +90,4 @@ Live query to `http://127.0.0.1:11434/api/tags` confirmed:
 * **Milestone 6:** Elevate Swarm Specialist Agents to invoke real tools and models dynamically.
 * **Milestone 7:** Capability Benchmarks A through H (`scripts/run_aiva2_benchmarks.py`) with zero simulations.
 * **Milestone 8:** Author all 18 mandated documentation files in `docs/` and deliver the comprehensive final report.
+

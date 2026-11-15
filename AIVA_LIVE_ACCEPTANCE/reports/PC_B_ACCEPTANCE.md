@@ -36,3 +36,4 @@ The request asked AIVA to:
    * Real browser navigation via `BrowserTool` returned HTTP `200 OK`, Title: `AIVA Task Manager (PC-B)`.
 5. **Evidence Artifact:**
    * `AIVA_LIVE_ACCEPTANCE/evidence/verification/project_02_pc_b_evidence.json`.
+

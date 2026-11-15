@@ -50,3 +50,4 @@ stateDiagram-v2
 
 1. **Atomic Append-Only JSONL Ledger:** Every state transition, metadata update, and artifact creation is committed to `backend/data/tasks/task_ledger.jsonl` using `os.fsync`.
 2. **Reboot Crash Recovery:** Upon orchestrator initialization, `TaskLifecycleEngine.recover_interrupted_tasks()` scans for orphaned tasks in `EXECUTING` or `PLANNING`, promotes them to `RECOVERING`, increments retry counters, and resumes pipeline execution.
+

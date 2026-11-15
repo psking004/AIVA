@@ -1,0 +1,54 @@
+{
+  "web_navigation": [
+    {
+      "name": "Python PEPs",
+      "url": "https://peps.python.org/",
+      "status_code": 200,
+      "title": "PEP 0 \u2013 Index of Python Enhancement Proposals (PEPs) | peps.python.org",
+      "links_found": 4,
+      "text_preview": "PEP 0 \u2013 Index of Python Enhancement Proposals (PEPs) | peps.python.org Following system colour scheme Selected dark colour scheme Selected light colour scheme Python Enhancement Proposals Python &raqu",
+      "access_allowed": true,
+      "anti_bot_block_detected": false
+    },
+    {
+      "name": "Wikipedia Main",
+      "url": "https://en.wikipedia.org/wiki/Main_Page",
+      "status_code": 200,
+      "title": "Wikipedia, the free encyclopedia",
+      "links_found": 626,
+      "text_preview": "Wikipedia, the free encyclopedia Jump to content Main menu Main menu move to sidebar hide Navigation Main page Contents Current events Random article About Wikipedia Contact us Contribute Help Learn t",
+      "access_allowed": true,
+      "anti_bot_block_detected": false
+    },
+    {
+      "name": "IETF RFC Index",
+      "url": "https://www.rfc-editor.org/",
+      "status_code": 200,
+      "title": "RFC Editor",
+      "links_found": 30,
+      "text_preview": "RFC Editor Your browser has JavaScript disabled. Most of this site works without JS, but some features require it. If something seems broken please try enabling JavaScript and reloading the page. The ",
+      "access_allowed": true,
+      "anti_bot_block_detected": false
+    },
+    {
+      "name": "W3C Standards (Anti-Scraping Test)",
+      "url": "https://www.w3.org/",
+      "status_code": -1,
+      "title": null,
+      "links_found": 0,
+      "text_preview": "",
+      "access_allowed": false,
+      "anti_bot_block_detected": false
+    }
+  ],
+  "document_download": {
+    "url": "https://peps.python.org/pep-0008/",
+    "saved_path": "C:\\Users\\bhara\\AIVA\\AIVA_LIVE_ACCEPTANCE_V2\\projects\\PROJECT_03_BROWSER_AUTOMATION\\PEP_0008_SPECIFICATION.txt",
+    "bytes": 2010,
+    "verified": true
+  },
+  "computer_use": {
+    "workspace_command_ok": true,
+    "security_block_ok": true
+  }
+}

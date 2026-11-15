@@ -17,3 +17,4 @@ AIVA 2.0 enforces strict boundaries before executing any computer-use or shell c
    * Arbitrary database drops (`drop database`)
 3. **AST Pre-Validation:** Code generation requires syntax tree verification before being written to disk.
 4. **Approval Gates:** High-risk actions require transitioning to `AWAITING_APPROVAL` before proceeding.
+

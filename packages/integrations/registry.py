@@ -155,3 +155,4 @@ class PersonalIntegrationsRegistry:
             "result": f"Dispatched {action} to {target.endpoint}",
             "duration_ms": round((time.time() - start_t) * 1000, 2),
         }
+
