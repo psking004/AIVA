@@ -37,6 +37,7 @@ import { ContextualSheet } from '../src/components/contextual-sheet';
 import { wakeWordService } from '../src/services/wakeword/wake-word.service';
 import { aivaClient } from '../src/services/api/aiva-client';
 import { aivaVoiceService, VoiceState } from '../src/services/voice/voice.service';
+import { resolvePcbBaseUrl } from '../src/services/remote/fabric-discovery';
 import {
   remoteExecService,
   parseLaunchIntent,
@@ -125,7 +126,8 @@ export default function MobileHomeScreen() {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2500);
-      const resp = await fetch('http://10.84.73.59:5050/api/fabric/briefing', { signal: controller.signal });
+      const pcbBase = await resolvePcbBaseUrl();
+      const resp = await fetch(`${pcbBase}/api/fabric/briefing`, { signal: controller.signal });
       clearTimeout(timeoutId);
       if (resp.ok) {
         const data = await resp.json();

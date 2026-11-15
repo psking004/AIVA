@@ -9,6 +9,7 @@
 
 import axios from 'axios';
 import { aivaClient } from '../api/aiva-client';
+import { resolvePcbBaseUrl, getCachedPcbBaseUrl } from './fabric-discovery';
 
 export type NodeTarget = 'MOBILE' | 'PC-A' | 'PC-B' | 'CLOUD';
 export type ExecAction = 'STATUS' | 'BUILD' | 'TEST' | 'CODE' | 'EXEC' | 'LAUNCH_APP' | 'CLOSE_APP' | 'CREATE_FILE' | 'OPEN_FILE' | 'BOOT_OLLAMA' | 'TYPE_TEXT' | 'START_DICTATION' | 'STOP_DICTATION' | 'PLAN' | 'INSTALL_APP' | 'MODIFY_FILE' | 'READ_FILE' | 'SEARCH_WORKSPACE' | 'EXECUTE_SHELL' | 'EXECUTE_PLAN';
@@ -134,7 +135,7 @@ export interface RemoteExecResult {
   raw?: any;
 }
 
-const PCB_LOCAL_DAEMON = 'http://10.84.73.59:5050/api/remote-exec';
+const getPcbDaemonUrl = async () => `${await resolvePcbBaseUrl()}/api/remote-exec`;
 
 /**
  * Prioritized remote execution intent classification with phonetic normalization
@@ -371,8 +372,9 @@ export class RemoteExecService {
 
     // 1. Attempt direct LAN dispatch to PC-B local daemon (port 5050)
     try {
+      const daemonUrl = await getPcbDaemonUrl();
       const response = await axios.post(
-        PCB_LOCAL_DAEMON,
+        daemonUrl,
         {
           target: intent.targetNode,
           action: intent.action,

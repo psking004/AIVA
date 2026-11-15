@@ -221,18 +221,30 @@ class AivaAccessibilityService : AccessibilityService() {
             }.toString()
 
             ioExecutor.execute {
-                try {
-                    val conn = (URL("http://10.84.73.59:5050/api/checkpoint/save").openConnection() as HttpURLConnection).apply {
-                        requestMethod = "POST"
-                        setRequestProperty("Content-Type", "application/json")
-                        doOutput = true
-                        connectTimeout = 3000
-                        readTimeout = 3000
-                    }
-                    conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-                    conn.responseCode
-                    conn.disconnect()
-                } catch (_: Exception) {}
+                val candidateHosts = listOf(
+                    "http://10.16.177.59:5050",
+                    "http://10.84.73.59:5050",
+                    "http://192.168.1.59:5050",
+                    "http://192.168.43.59:5050",
+                    "http://127.0.0.1:5050"
+                )
+                for (host in candidateHosts) {
+                    try {
+                        val conn = (URL("$host/api/checkpoint/save").openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            setRequestProperty("Content-Type", "application/json")
+                            doOutput = true
+                            connectTimeout = 1200
+                            readTimeout = 1200
+                        }
+                        conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                        val code = conn.responseCode
+                        conn.disconnect()
+                        if (code in 200..299) {
+                            break
+                        }
+                    } catch (_: Exception) {}
+                }
             }
         }
     }
