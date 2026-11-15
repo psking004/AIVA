@@ -205,3 +205,4 @@ class SSEAdapter:
             execution_time_ms=round((time.time() - start_time) * 1000, 2),
             is_fallback=True,
         )
+

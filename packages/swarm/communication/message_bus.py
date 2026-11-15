@@ -84,3 +84,4 @@ class SwarmMessageBus:
         """Resets the message counter for a task."""
         with self._lock:
             self._task_message_counts.pop(task_id, None)
+

@@ -73,3 +73,4 @@ class PersonalityProfile:
         "See you! I'll be right here whenever you're back.",
         "Poitu vanga! Take care!",
     ]
+

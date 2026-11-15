@@ -44,3 +44,4 @@ Saying the wake word previously failed to reliably bring AIVA into its active st
 {"confidence":1,"keyword":"AIVA","type":"wake","threshold":0.75,"latencyMs":30,"status":"CONFIRMED"}
 [WAKE WORD HARNESS] Mic check: OK | Wake test: PASS ('AIVA') | Latency: 30ms (Target: < 180 ms)
 ```
+

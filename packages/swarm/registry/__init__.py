@@ -5,3 +5,4 @@ from packages.swarm.registry.agent_definitions import (
 )
 
 __all__ = ["AgentDefinition", "get_specialist_agent_catalog"]
+

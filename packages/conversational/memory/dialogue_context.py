@@ -84,3 +84,4 @@ class DialogueContextManager:
         self.history.clear()
         self.current_topic = "general"
         self.last_referenced_entity = None
+

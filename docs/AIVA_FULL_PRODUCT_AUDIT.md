@@ -54,3 +54,4 @@ In `apps/desktop/main.js`:
 | **DEF-04** | TTS Pipeline Latency | `apps/desktop/src/App.tsx:373` & `kokoro-service.py` | Monolithic paragraph synthesis. Text displays at $t=0$, audio blocked on full generation ($4-5$s lag). | Implement clause/sentence streaming. Synthesize first sentence immediately ($<500$ms), stream audio chunks incrementally, synchronized with avatar visemes. |
 | **DEF-05** | Microphone Contention | `apps/desktop/whisper-service.py` | Multiple whisper processes holding mic input streams open. | Enforce singular child process lifecycle. Clean up existing processes before spawning. |
 | **DEF-06** | Barge-In Interruption | `App.tsx`, `main.js`, `barge_in.py` | UI cancels HTML audio, but backend and TTS streams may continue buffering. | Spacebar, mic activity, and wake word trigger immediate audio element pause, TTS abort controller, and Kokoro synthesis cancellation. |
+

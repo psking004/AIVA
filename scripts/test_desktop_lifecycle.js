@@ -116,3 +116,4 @@ if (require.main === module) {
   const ok = runTests();
   process.exit(ok ? 0 : 1);
 }
+

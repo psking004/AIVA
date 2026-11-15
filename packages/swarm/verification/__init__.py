@@ -5,3 +5,4 @@ from packages.swarm.verification.verifier import (
 )
 
 __all__ = ["IndependentVerifier", "VerificationVerdict"]
+

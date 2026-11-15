@@ -53,3 +53,4 @@ There is now **exactly one** authoritative avatar instance across the desktop.
 2. **Reactivation Reuses Existing Window**: The secondary launch triggers the `second-instance` IPC event on the primary process, bringing `mainWindow` forward.
 3. **Monotonic Turn State**: Turn tokens (`turnId`) ensure only the current turn's visual state can mutate the avatar.
 4. **Interruption Transition**: Clicking the face or pressing Spacebar transitions the avatar immediately back to `LISTENING`, rather than spawning a new element or closing the app.
+

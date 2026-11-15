@@ -304,3 +304,4 @@ def get_specialist_agent_catalog() -> Dict[str, AgentDefinition]:
     )
 
     return catalog
+

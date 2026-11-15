@@ -95,3 +95,4 @@ class SwarmTelemetry:
             if not task_id:
                 return list(self._events)
             return [e for e in self._events if e.task_id == task_id]
+

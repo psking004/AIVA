@@ -62,3 +62,4 @@ Sentence / Clause Segmenter (Regex: /[^.!?]+[.!?]+|[^.!?]+$/g)
 | **First Sentence Synthesis (35 chars)** | 10,246 ms | 3,276 ms (cold) / <5 ms (pre-cached) |
 | **Text-to-First-Audio Display Gap** | 4,000–5,000 ms lag | **0 ms** (exact audio synchronization) |
 | **Barge-In Cutoff Latency** | Ignored / delayed | **< 15 ms** (immediate pause + abort) |
+

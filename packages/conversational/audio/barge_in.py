@@ -59,3 +59,4 @@ class BargeInController:
     def register_cancel_callback(self, cb: Callable[[], None]) -> None:
         with self._lock:
             self._cancel_callbacks.append(cb)
+

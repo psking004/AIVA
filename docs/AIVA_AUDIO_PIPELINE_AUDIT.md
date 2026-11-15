@@ -28,3 +28,4 @@ When the user speaks or presses Spacebar during active speech:
 - Test 5: Barge-in Session Token Invalidation: **PASS**
 - Speech recognition benchmark: `apps/desktop/whisper-service.py --warmup` -> **1017.4 ms (Target: < 1800 ms)**.
 - Wake grammar check: `speech-listener.ps1 -TestMic` -> **30 ms (Target: < 180 ms)**.
+
