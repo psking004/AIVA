@@ -33,6 +33,10 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.net.URLEncoder
 import java.util.Locale
+import android.media.AudioDeviceInfo
+import android.media.AudioDeviceCallback
+import android.location.LocationManager
+import android.location.Geocoder
 
 /**
  * AivaVoiceModule
@@ -1135,6 +1139,105 @@ class AivaVoiceModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun removeListeners(count: Int) {}
+
+    private var activeBluetoothDevice: AudioDeviceInfo? = null
+
+    private fun isBluetoothHeadset(device: AudioDeviceInfo): Boolean {
+        return device.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+               device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+               (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && device.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+    }
+
+    private fun routeToBluetoothHeadset(am: AudioManager, btDevice: AudioDeviceInfo, enableMicSco: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            am.setCommunicationDevice(btDevice)
+        }
+        if (enableMicSco) {
+            am.isBluetoothScoOn = true
+            am.startBluetoothSco()
+        } else {
+            releaseBluetoothMicSco(am)
+        }
+    }
+
+    private fun releaseBluetoothMicSco(am: AudioManager) {
+        if (am.isBluetoothScoOn) {
+            am.stopBluetoothSco()
+            am.isBluetoothScoOn = false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && activeBluetoothDevice == null) {
+            am.clearCommunicationDevice()
+        }
+    }
+
+    @ReactMethod
+    fun configureAudioRouting(enableMicSco: Boolean, promise: Promise) {
+        try {
+            val am = audioManager ?: (reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager)
+            val ringerMode = am.ringerMode
+            val isSilentOrVibrate = (ringerMode == AudioManager.RINGER_MODE_SILENT || ringerMode == AudioManager.RINGER_MODE_VIBRATE)
+            val isInPhoneCall = (am.mode == AudioManager.MODE_IN_CALL || am.mode == AudioManager.MODE_IN_COMMUNICATION)
+
+            val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            val btDevice = outputs.firstOrNull { isBluetoothHeadset(it) }
+            activeBluetoothDevice = btDevice
+
+            if (btDevice != null && !isInPhoneCall) {
+                routeToBluetoothHeadset(am, btDevice, enableMicSco)
+            } else {
+                releaseBluetoothMicSco(am)
+            }
+
+            val map = com.facebook.react.bridge.Arguments.createMap().apply {
+                putBoolean("isSilentMode", isSilentOrVibrate)
+                putBoolean("isInPhoneCall", isInPhoneCall)
+                putBoolean("hasBluetoothAudio", btDevice != null)
+                putString("bluetoothDeviceName", btDevice?.productName?.toString() ?: "None")
+            }
+            promise.resolve(map)
+        } catch (e: Exception) {
+            promise.reject("AUDIO_ROUTING_ERR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun getCurrentLocation(promise: Promise) {
+        try {
+            val lm = reactContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val hasPerm = ContextCompat.checkSelfPermission(
+                reactContext, android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            var city = "Hosur"
+            var state = "Tamil Nadu"
+            var country = "India"
+
+            if (hasPerm) {
+                val loc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                    ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                if (loc != null && Geocoder.isPresent()) {
+                    val geocoder = Geocoder(reactContext, Locale.getDefault())
+                    @Suppress("DEPRECATION")
+                    val addresses = geocoder.getFromLocation(loc.latitude, loc.longitude, 1)
+                    if (!addresses.isNullOrEmpty()) {
+                        city = addresses[0].locality ?: city
+                        state = addresses[0].adminArea ?: state
+                        country = addresses[0].countryName ?: country
+                    }
+                }
+            }
+
+            val res = com.facebook.react.bridge.Arguments.createMap().apply {
+                putString("city", city)
+                putString("state", state)
+                putString("country", country)
+                putString("formatted", "$city, $state, $country")
+            }
+            promise.resolve(res)
+        } catch (e: Exception) {
+            promise.reject("GPS_ERR", e.message)
+        }
+    }
 
     override fun onCatalystInstanceDestroy() {
         super.onCatalystInstanceDestroy()

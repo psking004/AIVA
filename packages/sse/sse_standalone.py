@@ -2325,3 +2325,94 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ==============================================================================
+# 11. TOOL LIFECYCLE HOOKS, VERIFICATION & UI TREE INSPECTOR
+# ==============================================================================
+
+class ToolLifecycleHooks:
+    """
+    Deterministic PreToolUse and PostToolUse lifecycle hooks.
+    Enforces safety invariants before execution and auto-saves/validates after execution.
+    """
+    BLOCKED_PATTERNS = [
+        r"rm\s+-rf\s+/",
+        r"format\s+[a-z]:",
+        r"del\s+/f\s+/s\s+/q\s+c:\\windows",
+        r"Stop-Computer",
+        r"Restart-Computer"
+    ]
+
+    @classmethod
+    def pre_tool_use(cls, action: str, payload: dict, target_node: str = "PC-B") -> tuple[bool, str]:
+        cmd = f"{payload.get('command', '')} {payload.get('file', '')}"
+        for pattern in cls.BLOCKED_PATTERNS:
+            if re.search(pattern, cmd, re.IGNORECASE):
+                return False, f"PreToolUse Security Hook blocked destructive pattern '{pattern}' on {target_node}."
+        return True, "OK"
+
+    @classmethod
+    def post_tool_use(cls, action: str, payload: dict, target_node: str = "PC-B", ui_agent=None) -> dict:
+        notes = []
+        if action in ["CREATE_FILE", "MODIFY_FILE", "WRITE_FILE"]:
+            file_path = payload.get("file", "")
+            window_hint = os.path.basename(file_path) if file_path else ""
+            if ui_agent is not None and hasattr(ui_agent, "ensure_manual_save"):
+                saved = ui_agent.ensure_manual_save(window_title=window_hint, target_node=target_node)
+                notes.append(f"Auto-save ({target_node}): {'SAVED' if saved else 'DISK_SYNCED'}")
+            if file_path.endswith(".py") and os.path.exists(file_path):
+                res = subprocess.run([sys.executable, "-m", "py_compile", file_path], capture_output=True, text=True)
+                notes.append("Syntax validation: PASS" if res.returncode == 0 else f"Syntax validation FAIL: {res.stderr}")
+        return {"hooks_executed": notes}
+
+
+class VerificationSubagent:
+    """
+    Post-execution verifier ensuring reliable state transitions across PC-B and PC-A.
+    """
+    @staticmethod
+    def verify_step(step: dict, result: dict) -> tuple[bool, str]:
+        if not result.get("success", False):
+            return False, result.get("output", "Execution reported failure")
+        action = step.get("action")
+        if action in ["CREATE_FILE", "MODIFY_FILE"]:
+            target_file = step.get("file", "")
+            if target_file and not os.path.exists(target_file):
+                return False, f"Verification failed: {target_file} not found on disk"
+        return True, "VERIFIED"
+
+
+class AgentDesktopTreeInspector:
+    """
+    Clean-room Windows UI Automation element indexer on PC-B and PC-A with a 3-attempt loop guard.
+    """
+    MAX_RETRIES = 3
+    _attempt_tracker: dict[str, int] = {}
+
+    @classmethod
+    def snapshot_window(cls, window_title: str, target_node: str = "PC-B") -> str:
+        ps_script = f"""
+        Add-Type -AssemblyName UIAutomationClient
+        $root = [System.Windows.Automation.AutomationElement]::RootElement
+        $wins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+        foreach ($w in $wins) {{
+            if ($w.Current.Name -like "*{window_title}*") {{
+                $desc = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+                $idx = 0
+                foreach ($d in $desc) {{
+                    if ($d.Current.Name -and $idx -lt 40) {{
+                        Write-Output "[$idx] $($d.Current.ControlType.ProgrammaticName) | Name='$($d.Current.Name)' | Id='$($d.Current.AutomationId)'"
+                        $idx++
+                    }}
+                }}
+                break
+            }}
+        }}
+        """
+        if target_node.upper() == "PC-A":
+            cmd = ["powershell", "-NoProfile", "-Command", f"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {ps_script} }}"]
+        else:
+            cmd = ["powershell", "-NoProfile", "-Command", ps_script]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        return res.stdout.strip()

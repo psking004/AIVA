@@ -96,22 +96,36 @@ def init_engine():
         sys.stderr.write(f"[KOKORO TTS] Initialization error: {e}\n")
         return False
 
+CHECKPOINT_DIR_PCB = r"C:\AIVA_Workspace\checkpoints"
+CHECKPOINT_DIR_PCA = r"\\10.16.177.194\AIVA_Workspace\checkpoints"
+os.makedirs(CHECKPOINT_DIR_PCB, exist_ok=True)
+
+def normalize_speech_text(text: str) -> str:
+    return re.sub(r'\bAIVA\b', 'Eyva', text, flags=re.IGNORECASE)
+
 def fetch_fabric_briefing():
     """
     Fetches real-time briefing telemetry across the tri-node fabric:
-    - Weather in Chennai via wttr.in (with resilient fallback)
-    - Active processes on PC-B (aiva/python services)
-    - PC-A WinRM port 5985 reachability
+    - Weather in Hosur/Chennai via wttr.in (with resilient fallback)
+    - Active processes on PC-B (aiva/python/node services)
+    - PC-A WinRM port 5985 reachability and RTX 3050 status
     """
-    weather = "30°C and partly cloudy"
+    weather = "clear and 28°C"
     try:
-        req = urllib.request.Request("http://wttr.in/Chennai?format=%C+%t", headers={"User-Agent": "curl/7.68.0"})
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
+        req = urllib.request.Request("https://wttr.in/Hosur?format=%C+%t", headers={"User-Agent": "curl/7.68.0"})
+        with urllib.request.urlopen(req, timeout=2.5) as resp:
             w_text = resp.read().decode("utf-8").strip()
             if w_text:
                 weather = w_text
-    except Exception as w_err:
-        sys.stderr.write(f"[Briefing] Weather query notice: {w_err}\n")
+    except Exception:
+        try:
+            req = urllib.request.Request("https://wttr.in/Chennai?format=%C+%t", headers={"User-Agent": "curl/7.68.0"})
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                w_text = resp.read().decode("utf-8").strip()
+                if w_text:
+                    weather = w_text
+        except Exception as w_err:
+            sys.stderr.write(f"[Briefing] Weather query notice: {w_err}\n")
 
     pcb_procs = []
     try:
@@ -119,7 +133,7 @@ def fetch_fabric_briefing():
         for p in psutil.process_iter():
             try:
                 name = p.name()
-                if any(k in name.lower() for k in ("aiva", "python")):
+                if any(k in name.lower() for k in ("aiva", "python", "node")):
                     pcb_procs.append(name)
             except Exception:
                 pass
@@ -127,9 +141,9 @@ def fetch_fabric_briefing():
         sys.stderr.write(f"[Briefing] psutil inspection notice: {ps_err}\n")
 
     proc_count = len(pcb_procs)
-    pcb_summary = f"{proc_count} active services" if proc_count > 0 else "core services"
+    pcb_summary = f"PC-B host is running steady with {proc_count} active processes"
 
-    pca_ip = "10.84.73.194"
+    pca_ip = "10.16.177.194"
     winrm_up = False
     try:
         import socket
@@ -141,15 +155,29 @@ def fetch_fabric_briefing():
     except Exception:
         pass
 
-    pca_status = "online and ready" if winrm_up else "in low-power standby"
+    pca_summary = (
+        "PC-A compute station is online with RTX 3050 graphics ready"
+        if winrm_up else
+        "PC-A compute station is currently in standby on WinRM"
+    )
+
+    briefing_text = (
+        f"Welcome back! Outside in Hosur it's {weather}. "
+        f"{pcb_summary}, and {pca_summary}. "
+        f"Both workstation nodes are synchronized — what are we building today?"
+    )
 
     return {
         "success": True,
+        "briefingText": briefing_text,
+        "phoneticBriefing": normalize_speech_text(briefing_text),
         "weather": weather,
-        "pcb_processes": pcb_summary,
+        "pcb_processes": f"{proc_count} active processes",
         "pcb_process_count": proc_count,
-        "pca_status": pca_status,
+        "pca_status": "online and ready" if winrm_up else "in low-power standby",
         "pca_online": winrm_up,
+        "pc_b": {"status": "online", "processes": proc_count},
+        "pc_a": {"status": "online" if winrm_up else "standby", "ip": pca_ip, "port": 5985},
         "timestamp": time.time()
     }
 
@@ -530,7 +558,7 @@ def execute_install_package(package_name, manager="winget", target_node="PC-B"):
     ]
 
     if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
-        pca_ip = "10.84.73.194"
+        pca_ip = "10.16.177.194"
         cmd_str = f"winget install --id {pkg_id} -e --silent --accept-source-agreements --accept-package-agreements --disable-interactivity"
         winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {cmd_str} }}"'
         try:
@@ -587,10 +615,10 @@ def execute_install_package(package_name, manager="winget", target_node="PC-B"):
 
 def resolve_workspace_filepath(filename_or_path, target_node="PC-B"):
     p = str(filename_or_path).strip()
-    is_pca = "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node or p.startswith(r"\\10.84.73.194") or p.lower().startswith("pca\\") or p.lower().startswith("pca/")
+    is_pca = "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node or p.startswith(r"\\10.16.177.194") or p.lower().startswith("pca\\") or p.lower().startswith("pca/")
     if is_pca:
         clean_p = re.sub(r'^(?:pca[\\/]|\\*10\.84\.73\.194[\\/]AIVA_Workspace[\\/])', '', p, flags=re.I)
-        target_path = os.path.join(r"\\10.84.73.194\AIVA_Workspace", os.path.basename(clean_p) if not os.path.dirname(clean_p) else clean_p)
+        target_path = os.path.join(r"\\10.16.177.194\AIVA_Workspace", os.path.basename(clean_p) if not os.path.dirname(clean_p) else clean_p)
         mirror_path = os.path.join(r"C:\AIVA_Workspace\pca", os.path.basename(clean_p) if not os.path.dirname(clean_p) else clean_p)
         return target_path, mirror_path, True
     else:
@@ -689,7 +717,7 @@ def execute_shell_command(command, cwd=None, timeout=60, target_node="PC-B"):
         return False, "No shell command provided.", "", -1
     
     if "PC-A" in target_node.upper() or "PCA" in target_node.upper() or "194" in target_node:
-        pca_ip = "10.84.73.194"
+        pca_ip = "10.16.177.194"
         escaped = command.replace("'", "''")
         winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ cmd.exe /c \'{escaped}\' }}"'
         try:
@@ -715,7 +743,7 @@ EXE_CANDIDATES_PCB = [
 EXE_CANDIDATES_PCA = [
     r"C:\Users\parthasarathi\AppData\Local\Programs\AIVA\AIVA.exe",
     r"C:\AIVA_Workspace\AIVA.exe",
-    r"\\10.84.73.194\AIVA_Workspace\AIVA.exe",
+    r"\\10.16.177.194\AIVA_Workspace\AIVA.exe",
     r"C:\Users\parthasarathi\AIVA\apps\desktop\dist\win-unpacked\AIVA.exe",
 ]
 
@@ -774,7 +802,7 @@ def launch_fabric_visual(target="BOTH"):
                 "Register-ScheduledTask -TaskName 'AIVANativeApp' -Action $act -Trigger $trig -Principal $princ -Force | Out-Null; "
                 "Start-ScheduledTask -TaskName 'AIVANativeApp'"
             )
-            winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ {remote_cmd} }}"'
+            winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.16.177.194 -ScriptBlock {{ {remote_cmd} }}"'
             p = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=15)
             results["PC-A"] = "Launched dedicated native executable on PC-A physical screen." if p.returncode == 0 else (p.stderr.strip() or "Dispatched native app launch to PC-A.")
         except Exception as e:
@@ -918,7 +946,7 @@ def execute_sse_plan_steps(steps):
             elif s_act == "OPEN_APP":
                 app = s.get("application") or s.get("target") or ""
                 escaped = app.replace("'", "''")
-                winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process \'{escaped}\' }}"'
+                winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.16.177.194 -ScriptBlock {{ Start-Process \'{escaped}\' }}"'
                 try:
                     p = subprocess.run(winrm_cmd, shell=True, capture_output=True, text=True, timeout=30)
                     s_res["success"], s_res["output"] = p.returncode == 0, f"Dispatched launch of {app} to PC-A."
@@ -984,12 +1012,14 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "node": "PC-B",
                 "status": "ONLINE",
-                "ip": "10.84.73.59",
+                "ip": "10.16.177.59",
                 "tts": "ready" if kokoro_engine is not None else "uninitialized",
                 "message": "PC-B host workstation daemon active"
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
-        elif self.path in ("/api/fabric/briefing", "/api/briefing"):
+        
+
+        if self.path in ("/api/fabric/briefing", "/api/briefing"):
             briefing_data = fetch_fabric_briefing()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1084,6 +1114,50 @@ class KokoroHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
+        if self.path in ("/api/checkpoint/save", "/checkpoint/save"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            except Exception:
+                data = {}
+            source_app = re.sub(r'[^a-zA-Z0-9._-]', '_', data.get("app", "agent"))
+            ckpt_content = data.get("content", "")
+            quota_warning = bool(data.get("quotaWarning", False))
+
+            ts = int(time.time())
+            filename = f"{source_app}_checkpoint.md"
+            pcb_path = os.path.join(CHECKPOINT_DIR_PCB, filename)
+            header = f"<!-- Checkpoint Timestamp: {ts} | QuotaWarning: {quota_warning} -->\n"
+
+            try:
+                with open(pcb_path, "w", encoding="utf-8") as f:
+                    f.write(header + ckpt_content)
+            except Exception as e:
+                sys.stderr.write(f"[Checkpoint] PCB write err: {e}\n")
+
+            mirrored_pca = False
+            def _async_mirror_pca():
+                try:
+                    os.makedirs(CHECKPOINT_DIR_PCA, exist_ok=True)
+                    with open(os.path.join(CHECKPOINT_DIR_PCA, filename), "w", encoding="utf-8") as f:
+                        f.write(header + ckpt_content)
+                except Exception:
+                    pass
+            threading.Thread(target=_async_mirror_pca, daemon=True).start()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": True,
+                "pcb_path": pcb_path,
+                "mirrored_to_pca": mirrored_pca,
+                "handoff_triggered": quota_warning
+            }).encode("utf-8"))
+            return
+
         if self.path in ("/api/fabric/launch-visual", "/api/launch-visual"):
             content_length = int(self.headers.get("Content-Length", 0))
             body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
@@ -1291,7 +1365,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
             text = str(data.get("text", "")).strip()
 
             global ACTIVE_SESSION
-            import os, sys, subprocess, socket
+            # already imported globally: os, sys, subprocess, socket
 
             sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, app='{application}', query='{query}'\n")
 
@@ -1310,7 +1384,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 ACTIVE_SESSION["dictation_active"] = False
 
                 if target_node == "PC-A":
-                    pca_share = r"\\10.84.73.194\AIVA_Workspace"
+                    pca_share = r"\\10.16.177.194\AIVA_Workspace"
                     remote_target_path = os.path.join(pca_share, file_name)
                     local_mirror_path = os.path.join(r"C:\AIVA_Workspace\pca", file_name)
 
@@ -1335,7 +1409,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         ACTIVE_SESSION["active_file"] = file_name
 
                         # 3. Non-blocking WinRM attempt to open editor on PC-A
-                        winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process notepad.exe \\"C:\\AIVA_Workspace\\{file_name}\\" }}"'
+                        winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName 10.16.177.194 -ScriptBlock {{ Start-Process notepad.exe \\"C:\\AIVA_Workspace\\{file_name}\\" }}"'
                         subprocess.Popen(winrm_cmd, shell=True)
 
                         res_data = {
@@ -1428,7 +1502,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                     res_data = {"success": True, "node": target_node, "file": file_name, "spokenResponse": "Dictation stopped."}
                 else:
                     if target_node == "PC-A":
-                        pca_share = r"\\10.84.73.194\AIVA_Workspace"
+                        pca_share = r"\\10.16.177.194\AIVA_Workspace"
                         remote_target_path = os.path.join(pca_share, file_name)
                         local_mirror_path = os.path.join(r"C:\AIVA_Workspace\pca", file_name)
                         os.makedirs(r"C:\AIVA_Workspace\pca", exist_ok=True)
@@ -1495,7 +1569,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
                 if target_node == "PC-A":
                     remote_path = f"C:\\AIVA_Workspace\\{file_name}"
-                    cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.84.73.194 -ScriptBlock {{ Start-Process notepad.exe '{remote_path}' }}\""
+                    cmd = f"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Invoke-Command -ComputerName 10.16.177.194 -ScriptBlock {{ Start-Process notepad.exe '{remote_path}' }}\""
                     try:
                         subprocess.Popen(cmd, shell=True)
                     except Exception:
@@ -1524,7 +1598,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
 
             # 3. Route for BOOT_OLLAMA (Phonetically normalized Ollama startup)
             elif action == "BOOT_OLLAMA" or (action in ("LAUNCH_APP", "LAUNCH") and "ollama" in (application or command or query).lower()):
-                pca_ip = "10.84.73.194"
+                pca_ip = "10.16.177.194"
                 import socket
                 winrm_up = False
                 try:
@@ -1567,7 +1641,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 app_target = application or command or query or ""
                 target_node = (target or "").upper()
                 if "PC-A" in target_node or "PCA" in target_node or "194" in target_node:
-                    pca_ip = "10.84.73.194"
+                    pca_ip = "10.16.177.194"
                     escaped = app_target.replace("'", "''")
                     ps_cmd = f"Start-Process '{escaped}'"
                     winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {ps_cmd} }}"'
@@ -1599,7 +1673,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 app_target = application or command or query or ""
                 target_node = (target or "").upper()
                 if "PC-A" in target_node or "PCA" in target_node or "194" in target_node:
-                    pca_ip = "10.84.73.194"
+                    pca_ip = "10.16.177.194"
                     escaped = app_target.replace("'", "''")
                     ps_cmd = f"Stop-Process -Name '{escaped}' -Force -ErrorAction SilentlyContinue"
                     winrm_cmd = f'powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-Command -ComputerName {pca_ip} -ScriptBlock {{ {ps_cmd} }}"'
@@ -1796,7 +1870,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
             # Route for PC-A target
             elif "PC-A" in target or "PCA" in target or "GPU" in target or "194" in target or "PC-A" in query.upper() or "GPU" in query.upper():
                 import socket
-                pca_ip = "10.84.73.194"
+                pca_ip = "10.16.177.194"
                 ollama_up = False
                 winrm_up = False
                 try:
@@ -1889,7 +1963,7 @@ class KokoroHandler(BaseHTTPRequestHandler):
                         "success": True,
                         "node": "PC-B",
                         "status": "ONLINE",
-                        "ip": "10.84.73.59",
+                        "ip": "10.16.177.59",
                         "tts": "ready" if kokoro_engine is not None else "uninitialized",
                         "spokenResponse": spoken
                     }

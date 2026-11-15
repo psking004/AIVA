@@ -226,12 +226,18 @@ export default function MobileHomeScreen() {
 
   // Text-to-Speech playback via native Android TTS engine with speaker output
   const speakResponse = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string, keepListening = false): Promise<void> => {
       clearTimers();
       setPresenceState('ACTIVE');
       speakingStartTimeRef.current = Date.now();
+      const spokenClean = text
+        .replace(/\bAIVA\b/gi, 'Eyva')
+        .replace(/[*#_`]/g, '')
+        .trim();
+      setLastResponseText(text);
+
       try {
-        const ttsPromise = aivaVoiceService.speak(text);
+        const ttsPromise = aivaVoiceService.speak(spokenClean);
         const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 20000));
         await Promise.race([ttsPromise, timeoutPromise]);
       } catch (err) {
@@ -239,10 +245,19 @@ export default function MobileHomeScreen() {
         console.warn('[AIVA Mobile] TTS speak error:', err);
       } finally {
         speakingEndTimeRef.current = Date.now();
-        if (voiceStateRef.current !== 'LISTENING') {
+        if (keepListening) {
+          setVoiceState('LISTENING');
+          setFaceState('LISTENING');
+          try {
+            await aivaVoiceService.startListening();
+          } catch (_e) {}
+        } else if (voiceStateRef.current !== 'LISTENING') {
           setVoiceState('IDLE');
           setFaceState('IDLE');
-          scheduleDormancy(2000);
+          setTimeout(() => {
+            setLastResponseText(null);
+          }, 3000);
+          scheduleDormancy(3500);
         }
       }
     },

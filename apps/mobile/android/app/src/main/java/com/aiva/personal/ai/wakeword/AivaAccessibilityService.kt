@@ -9,6 +9,10 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.concurrent.CopyOnWriteArrayList
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
+import org.json.JSONObject
 
 /**
  * AivaAccessibilityService
@@ -36,6 +40,17 @@ class AivaAccessibilityService : AccessibilityService() {
 
         @Volatile
         var isWhatsAppAutoSendPending = false
+
+        private val MONITORED_AGENT_PACKAGES = setOf(
+            "com.hark.android",
+            "ai.mainfunc.genspark",
+            "tech.butterfly.app",
+            "com.freebuff.app"
+        )
+
+        private val QUOTA_WARNING_TRIGGERS = listOf(
+            "credit", "limit reached", "remaining", "upgrade", "free tier", "out of tokens", "0 remaining"
+        )
 
         private val unreadNotifications = CopyOnWriteArrayList<NotificationRecord>()
 
@@ -101,6 +116,8 @@ class AivaAccessibilityService : AccessibilityService() {
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val ioExecutor = Executors.newSingleThreadExecutor()
+    private var lastCheckpointMs: Long = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -155,7 +172,16 @@ class AivaAccessibilityService : AccessibilityService() {
             }
         }
 
-        // 2. Auto-send WhatsApp message if pending
+        // 2. Incremental 45-second & Quota-Warning State Harvester for Free-Tier Agents
+        if (pkgName in MONITORED_AGENT_PACKAGES) {
+            val now = System.currentTimeMillis()
+            if (now - lastCheckpointMs >= 45_000L) {
+                lastCheckpointMs = now
+                harvestAndSaveCheckpoint(pkgName)
+            }
+        }
+
+        // 3. Auto-send WhatsApp message if pending
         if (pkgName == "com.whatsapp" && isWhatsAppAutoSendPending) {
             mainHandler.postDelayed({
                 if (isWhatsAppAutoSendPending) {
@@ -165,6 +191,49 @@ class AivaAccessibilityService : AccessibilityService() {
                     }
                 }
             }, 300)
+        }
+    }
+
+    fun harvestAndSaveCheckpoint(packageName: String) {
+        val root = rootInActiveWindow ?: return
+        val lines = mutableListOf<String>()
+        var quotaAlert = false
+
+        fun traverse(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            node.text?.toString()?.takeIf { it.isNotBlank() }?.let { txt ->
+                lines.add(txt)
+                if (QUOTA_WARNING_TRIGGERS.any { txt.contains(it, ignoreCase = true) }) {
+                    quotaAlert = true
+                }
+            }
+            for (i in 0 until node.childCount) {
+                traverse(node.getChild(i))
+            }
+        }
+        traverse(root)
+
+        if (lines.isNotEmpty()) {
+            val payload = JSONObject().apply {
+                put("app", packageName)
+                put("content", lines.joinToString("\n"))
+                put("quotaWarning", quotaAlert)
+            }.toString()
+
+            ioExecutor.execute {
+                try {
+                    val conn = (URL("http://10.84.73.59:5050/api/checkpoint/save").openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        setRequestProperty("Content-Type", "application/json")
+                        doOutput = true
+                        connectTimeout = 3000
+                        readTimeout = 3000
+                    }
+                    conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                    conn.responseCode
+                    conn.disconnect()
+                } catch (_: Exception) {}
+            }
         }
     }
 
