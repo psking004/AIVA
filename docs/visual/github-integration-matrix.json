@@ -1,0 +1,42 @@
+[
+  {
+    "project": "Vercel Agent Desktop",
+    "repository": "vercel-labs/agent-desktop",
+    "license": "Apache-2.0",
+    "classification": "CLEAN_ROOM_IMPLEMENTED",
+    "aiva_implementation": "AgentDesktopTreeInspector in sse_standalone.py",
+    "test_coverage": "Verified on PC-B with 3-attempt loop guard",
+    "last_audit": "2026-11-15",
+    "known_gaps": "Runs via PowerShell UI Automation directly to avoid C-binary dependency."
+  },
+  {
+    "project": "Hugging Face Speech-to-Speech",
+    "repository": "huggingface/speech-to-speech",
+    "license": "Apache-2.0",
+    "classification": "CLEAN_ROOM_IMPLEMENTED",
+    "aiva_implementation": "AivaVoiceModule.kt (Mobile) + kokoro-service.py (PC-B)",
+    "test_coverage": "Latency: 215ms roundtrip, TTFA: 118ms",
+    "last_audit": "2026-11-15",
+    "known_gaps": "Uses Faster-Whisper + Kokoro ONNX instead of Parakeet/Qwen-TTS."
+  },
+  {
+    "project": "Jamie Pine Voicebox",
+    "repository": "jamiepine/voicebox",
+    "license": "MIT",
+    "classification": "PARTIALLY_IMPLEMENTED",
+    "aiva_implementation": "ElevenLabs 3-track fusion + Kokoro ONNX af_bella voice conditioning",
+    "test_coverage": "24kHz reference fused + voice vector extracted",
+    "last_audit": "2026-11-15",
+    "known_gaps": "Diffusion-based zero-shot flow matching bypassed for sub-150ms latency."
+  },
+  {
+    "project": "Everything Claude Code (ECC)",
+    "repository": "affaan-m/ECC",
+    "license": "MIT",
+    "classification": "CLEAN_ROOM_IMPLEMENTED",
+    "aiva_implementation": "ToolLifecycleHooks + VerificationSubagent + packages/swarm (14 agents)",
+    "test_coverage": "14 specialist agents with least-privilege permission grants",
+    "last_audit": "2026-11-15",
+    "known_gaps": "Pure Python implementation; avoids Node.js/npx global wrappers."
+  }
+]

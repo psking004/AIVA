@@ -49,3 +49,4 @@ The three reference recordings located in [`apps/desktop/voices/raw_refs/`](file
 - **Phonetic Normalization:** All spoken text normalizes `"AIVA"` $\rightarrow$ `"Eyva"`, strips Markdown syntax (`*#_```), and expands abbreviations.
 - **Barge-In Interruption:** Touching the holographic interface or speaking while `voiceState === 'SPEAKING'` executes an immediate `stopSpeaking()` halt and re-opens the listening stream.
 - **12-Second Follow-Up Listening:** After speech completes, the microphone remains armed in follow-up mode for continuous, hands-free dialogue.
+

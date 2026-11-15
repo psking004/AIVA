@@ -66,3 +66,4 @@
 1. **Dynamic Model Router:** Map capability requests (`reasoning`, `coding`, `fast_chat`, `tool_use`) to locally verified models with graceful cloud fallbacks.
 2. **Interactive Visual Dashboard:** Build `docs/visual/index.html` displaying live node cards, model tests, voice spectrum, and physical device status.
 3. **Automated Test Harness:** Update `scripts/autonomous_hardware_test.ps1` to test the tri-node fabric end-to-end.
+

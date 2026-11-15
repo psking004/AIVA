@@ -1,0 +1,256 @@
+[
+  {
+    "event_id": "ev_1794751780426_0",
+    "timestamp": 1794751780.4261808,
+    "task_id": "task_c9a7571b",
+    "agent_id": "system",
+    "event_type": "CREATED",
+    "details": {
+      "query": "Deploy a network latency monitor on PC-B, test connectivity to PC-A, and verify with security reviewer"
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780445_1",
+    "timestamp": 1794751780.44557,
+    "task_id": "task_c9a7571b",
+    "agent_id": "agent_strategic_planner",
+    "event_type": "STARTED",
+    "details": {
+      "plan": {
+        "query": "Deploy a network latency monitor on PC-B, test connectivity to PC-A, and verify with security reviewer",
+        "target_node": "PC_B",
+        "solver_tier": "T1_IESDS",
+        "strategy": "DECOMPOSED_MULTI_NODE",
+        "expected_utility": 10.0,
+        "risk_level": "high",
+        "assigned_agents": [
+          "agent_strategic_planner",
+          "agent_researcher",
+          "agent_reviewer"
+        ],
+        "steps": [
+          {
+            "node": "PC-B",
+            "action": "EXECUTE_SHELL",
+            "command": "Deploy a network latency monitor on PC-B"
+          },
+          {
+            "node": "PC-A",
+            "action": "EXECUTE_SHELL",
+            "command": "test connectivity to PC-A"
+          },
+          {
+            "node": "PC-B",
+            "action": "EXECUTE_SHELL",
+            "command": "verify with security reviewer"
+          }
+        ],
+        "execution_time_ms": 18.27,
+        "is_fallback": false,
+        "evidence": {
+          "success": true,
+          "strategy": "DECOMPOSED_MULTI_NODE",
+          "query": "Deploy a network latency monitor on PC-B, test connectivity to PC-A, and verify with security reviewer",
+          "steps": [
+            {
+              "node": "PC-B",
+              "action": "EXECUTE_SHELL",
+              "command": "Deploy a network latency monitor on PC-B"
+            },
+            {
+              "node": "PC-A",
+              "action": "EXECUTE_SHELL",
+              "command": "test connectivity to PC-A"
+            },
+            {
+              "node": "PC-B",
+              "action": "EXECUTE_SHELL",
+              "command": "verify with security reviewer"
+            }
+          ],
+          "nodes_involved": [
+            "PC-B",
+            "PC-A"
+          ],
+          "target_node": "PC_B",
+          "solver_tier": "T1_IESDS",
+          "expected_utility": 10.0,
+          "spokenResponse": "Formulated 3-step dynamic DAG plan across PC-B, PC-A via T1_IESDS.",
+          "rationale": "Decomposed multi-clause intent into 3 dynamic strategic steps across PC-B, PC-A."
+        }
+      }
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780447_2",
+    "timestamp": 1794751780.4476562,
+    "task_id": "task_c9a7571b",
+    "agent_id": "agent_strategic_planner",
+    "event_type": "ASSIGNED",
+    "details": {
+      "agent_id": "agent_strategic_planner",
+      "selected_model": "qwen/qwen-2.5-72b-instruct (DeepSeek R1 equivalent)",
+      "provider": "openrouter",
+      "node": "CLOUD",
+      "latency_ms": 0.0,
+      "timestamp": 1794751780.4476562
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780449_3",
+    "timestamp": 1794751780.4494321,
+    "task_id": "task_c9a7571b",
+    "agent_id": "agent_researcher",
+    "event_type": "ASSIGNED",
+    "details": {
+      "agent_id": "agent_researcher",
+      "selected_model": "gemini-flash-lite-latest",
+      "provider": "gemini",
+      "node": "CLOUD",
+      "latency_ms": 0.0,
+      "timestamp": 1794751780.4494321
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780450_4",
+    "timestamp": 1794751780.450433,
+    "task_id": "task_c9a7571b",
+    "agent_id": "agent_reviewer",
+    "event_type": "ASSIGNED",
+    "details": {
+      "agent_id": "agent_reviewer",
+      "selected_model": "qwen/qwen-2.5-72b-instruct (DeepSeek R1 equivalent)",
+      "provider": "openrouter",
+      "node": "CLOUD",
+      "latency_ms": 0.0,
+      "timestamp": 1794751780.450433
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780454_5",
+    "timestamp": 1794751780.4544363,
+    "task_id": "task_c9a7571b",
+    "agent_id": "system",
+    "event_type": "CHECKPOINT",
+    "details": {
+      "stage": "pre_execution"
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780455_6",
+    "timestamp": 1794751780.4554348,
+    "task_id": "task_c9a7571b_seq_0",
+    "agent_id": "agent_strategic_planner",
+    "event_type": "STARTED",
+    "details": {
+      "objective": "Step 1: agent_strategic_planner executing Deploy a network latency monitor on PC-B, test connectivity to PC-A, and verify with security reviewer"
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780457_7",
+    "timestamp": 1794751780.4575675,
+    "task_id": "task_c9a7571b_seq_1",
+    "agent_id": "agent_researcher",
+    "event_type": "STARTED",
+    "details": {
+      "objective": "Step 2: agent_researcher executing Deploy a network latency monitor on PC-B, test connectivity to PC-A, and verify with security reviewer"
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780459_8",
+    "timestamp": 1794751780.4596758,
+    "task_id": "task_c9a7571b_seq_2",
+    "agent_id": "agent_reviewer",
+    "event_type": "STARTED",
+    "details": {
+      "objective": "Step 3: agent_reviewer executing Deploy a network latency monitor on PC-B, test connectivity to PC-A, and verify with security reviewer"
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780460_9",
+    "timestamp": 1794751780.4607878,
+    "task_id": "task_c9a7571b",
+    "agent_id": "scheduler",
+    "event_type": "TOOL_EXEC",
+    "details": {
+      "result": {
+        "task_id": "task_c9a7571b",
+        "agent_id": "sequential_pipeline",
+        "success": true,
+        "output": {
+          "agent_strategic_planner": {
+            "plan": "Formulated optimal task DAG",
+            "tier": "T1_IESDS",
+            "steps_scheduled": 3
+          },
+          "agent_researcher": {
+            "findings": "Identified codebase components matching: Step 2: agent_researcher executing Deploy a network latency monitor on PC-B, test connectivity to PC-A, and verify with security reviewer",
+            "matches_found": 4
+          },
+          "agent_reviewer": {
+            "verified": true,
+            "audit_findings": "All acceptance criteria verified against disk evidence"
+          }
+        },
+        "evidence": {
+          "pipeline_length": 3,
+          "steps": [
+            "agent_strategic_planner",
+            "agent_researcher",
+            "agent_reviewer"
+          ]
+        },
+        "execution_time_seconds": 0.005352973937988281,
+        "model_used": "unknown",
+        "node_executed": "PC-B",
+        "tokens_consumed": 0,
+        "error": null
+      }
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780461_10",
+    "timestamp": 1794751780.4618995,
+    "task_id": "task_c9a7571b",
+    "agent_id": "agent_reviewer",
+    "event_type": "VERIFICATION",
+    "details": {
+      "verified": true,
+      "confidence_score": 1.0,
+      "checks_passed": [
+        "REPORTED_SUCCESS",
+        "EXIT_CODE_ZERO"
+      ],
+      "checks_failed": [],
+      "audit_notes": "Verified 2 checks. 0 failures flagged."
+    },
+    "node": "PC-B"
+  },
+  {
+    "event_id": "ev_1794751780462_11",
+    "timestamp": 1794751780.4629781,
+    "task_id": "task_c9a7571b",
+    "agent_id": "agent_strategic_planner",
+    "event_type": "COMPLETION",
+    "details": {
+      "task_id": "task_c9a7571b",
+      "objective_achieved": true,
+      "payoff_score": 99.99,
+      "efficiency_ratio": 1.0,
+      "strategic_verdict": "OBJECTIVE_VERIFIED_NASH_OPTIMAL",
+      "recommended_action": "COMPLETE",
+      "audit_notes": "Evaluation completed in 0.01s with verdict OBJECTIVE_VERIFIED_NASH_OPTIMAL."
+    },
+    "node": "PC-B"
+  }
+]

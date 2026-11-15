@@ -16,7 +16,7 @@ import threading
 import time
 from typing import Any
 
-from sse.security.hardening import NonceTracker
+# Lazy/deferred import to prevent circular dependency with sse.security.hardening
 from sse.tri_node.sovereign_core import CLUSTER_SHARED_SECRET, NodeID
 
 
@@ -105,6 +105,7 @@ class MeshPayloadFirewall:
     """Ingress security gateway validating P2P mesh packets against attacks and floods."""
 
     def __init__(self, config: MeshFirewallConfig | None = None) -> None:
+        from sse.security.hardening import NonceTracker
         self.config = config or MeshFirewallConfig()
         self.rate_limiter = PeerRateLimiter(
             rate_per_second=self.config.rate_limit_per_second,

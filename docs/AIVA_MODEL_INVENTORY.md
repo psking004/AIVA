@@ -66,3 +66,4 @@ flowchart TD
 
 - **No Silent Cloud Routing:** Responses generated locally must explicitly state `provider: "ollama"`, `node: "PC-B" | "PC-A"`, and `model: "<model_tag>"`.
 - **Cloud Fallback Transparency:** When falling back to Render or external cloud APIs due to memory or latency limits, the response header reports `provider: "cloud_fallback"`.
+

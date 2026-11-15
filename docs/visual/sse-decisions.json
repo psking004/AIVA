@@ -1,0 +1,15 @@
+[
+  {
+    "decision_id": "dec_scen_8",
+    "objective": "Run large language model inference with high GPU demand",
+    "target_node": "PC_B",
+    "solver_tier": "T1_IESDS",
+    "expected_utility": 10.0,
+    "assigned_agents": [
+      "agent_reviewer",
+      "agent_strategic_planner",
+      "agent_desktop"
+    ],
+    "risk_level": "medium"
+  }
+]

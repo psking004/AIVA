@@ -1,0 +1,110 @@
+[
+  {
+    "scenario_id": 1,
+    "name": "Sequential Multi-Agent Execution",
+    "strategy": "SEQUENTIAL",
+    "passed": true,
+    "duration_sec": 0.007,
+    "mode": "REAL_EXECUTION",
+    "details": "Executed 6 agents sequentially with pipeline evidence."
+  },
+  {
+    "scenario_id": 2,
+    "name": "Parallel Research",
+    "strategy": "PARALLEL",
+    "passed": true,
+    "duration_sec": 0.02,
+    "mode": "REAL_EXECUTION",
+    "details": "Executed 3 agents concurrently in thread pool."
+  },
+  {
+    "scenario_id": 3,
+    "name": "Hierarchical Delegation",
+    "strategy": "HIERARCHICAL",
+    "passed": true,
+    "duration_sec": 0.009,
+    "mode": "REAL_EXECUTION",
+    "details": "Coordinator decomposed task and supervised 2 specialist delegates."
+  },
+  {
+    "scenario_id": 4,
+    "name": "Competitive Solution Selection",
+    "strategy": "COMPETITIVE",
+    "passed": true,
+    "duration_sec": 0.003,
+    "mode": "REAL_EXECUTION",
+    "details": "SSE evaluated competing proposals; winning agent: agent_coder."
+  },
+  {
+    "scenario_id": 5,
+    "name": "Agent Failure and Recovery",
+    "strategy": "RECOVERY",
+    "passed": true,
+    "duration_sec": 0.004,
+    "mode": "REAL_EXECUTION",
+    "details": "Triggered recovery failover without crashing pipeline."
+  },
+  {
+    "scenario_id": 6,
+    "name": "Task Cancellation",
+    "strategy": "CONTROL",
+    "passed": true,
+    "duration_sec": 0.0,
+    "mode": "REAL_EXECUTION",
+    "details": "Task cancelled cleanly; resources released immediately."
+  },
+  {
+    "scenario_id": 7,
+    "name": "Checkpoint Restoration",
+    "strategy": "PERSISTENCE",
+    "passed": true,
+    "duration_sec": 0.002,
+    "mode": "REAL_EXECUTION",
+    "details": "Checkpoint state snapshot written to disk and verified on restore."
+  },
+  {
+    "scenario_id": 8,
+    "name": "SSE-Driven Resource Allocation",
+    "strategy": "GAME_THEORETIC",
+    "passed": true,
+    "duration_sec": 0.035,
+    "mode": "REAL_EXECUTION",
+    "details": "SSE allocated task to PC_B with utility 10.0."
+  },
+  {
+    "scenario_id": 9,
+    "name": "Independent Result Verification",
+    "strategy": "ADVERSARIAL_AUDIT",
+    "passed": true,
+    "duration_sec": 0.001,
+    "mode": "REAL_EXECUTION",
+    "details": "Verified legitimate disk evidence and successfully flagged missing/tampered files."
+  },
+  {
+    "scenario_id": 10,
+    "name": "Local Model Unavailable",
+    "strategy": "SIMULATED_FAILOVER",
+    "passed": true,
+    "duration_sec": 0.0,
+    "mode": "SIMULATED",
+    "details": "Local Ollama simulated offline; smoothly failed over to openrouter."
+  },
+  {
+    "scenario_id": 11,
+    "name": "PC-A Unavailable",
+    "strategy": "SIMULATED_FAILOVER",
+    "passed": true,
+    "duration_sec": 0.0,
+    "mode": "SIMULATED",
+    "details": "PC-A simulated offline; execution routed to PC-B with fallback invariants."
+  },
+  {
+    "scenario_id": 12,
+    "name": "PC-B Unavailable",
+    "strategy": "SIMULATED_FAILOVER",
+    "passed": true,
+    "duration_sec": 0.0,
+    "mode": "SIMULATED",
+    "details": "PC-B simulated offline; keep-warm cloud anchor handles remote execution requests."
+  }
+]

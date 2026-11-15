@@ -29,3 +29,4 @@ External agents operating on free tiers or credit budgets can hit quota limits w
    - Checkpoints are POSTed to `http://10.16.177.59:5050/api/checkpoint/save`.
    - Saved to PC-B disk: `C:\AIVA_Workspace\checkpoints\<app>_checkpoint.md`.
    - Asynchronously mirrored to PC-A: `\\10.16.177.194\AIVA_Workspace\checkpoints\<app>_checkpoint.md`.
+

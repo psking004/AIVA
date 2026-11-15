@@ -17,18 +17,26 @@ import urllib.request
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import soundfile as sf
 
-# Strategic Systems Engine (SSE) Dynamic Import
+# Strategic Systems Engine (SSE) & Swarm Engine Dynamic Imports
 try:
-    _sse_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "packages", "sse"))
+    _repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+    _sse_path = os.path.abspath(os.path.join(_repo_root, "packages", "sse"))
     if _sse_path not in sys.path:
         sys.path.insert(0, _sse_path)
     from sse_standalone import evaluate_strategic_intent, dynamic_sse_planner, DynamicUIAgent
-    print("[KokoroDaemon] Strategic Systems Engine (SSE) decision core and DynamicUIAgent loaded.")
+    from packages.swarm import SwarmOrchestrator
+    swarm_orchestrator = SwarmOrchestrator(
+        telemetry_export_path=os.path.join(_repo_root, "docs", "visual", "swarm-events.json")
+    )
+    print("[KokoroDaemon] Strategic Systems Engine (SSE) & Swarm Orchestrator (14 specialist agents) loaded.")
 except Exception as _sse_err:
-    print(f"[KokoroDaemon] SSE load note: {_sse_err}")
+    print(f"[KokoroDaemon] SSE/Swarm load note: {_sse_err}")
     evaluate_strategic_intent = None
     dynamic_sse_planner = None
     DynamicUIAgent = None
+    swarm_orchestrator = None
 
 # Resilient Kokoro model path resolution
 def resolve_models_dir():
@@ -1026,6 +1034,38 @@ class KokoroHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps(briefing_data).encode("utf-8"))
+        elif self.path in ("/swarm", "/swarm-dashboard", "/observability"):
+            dash_path = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "visual", "swarm-dashboard.html")
+            if os.path.exists(dash_path):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                with open(dash_path, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
+        elif self.path in ("/api/swarm/agents", "/api/agents"):
+            agents_list = [ag.to_dict() for ag in swarm_orchestrator.agents.values()] if swarm_orchestrator else []
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "agents": agents_list, "count": len(agents_list)}).encode("utf-8"))
+        elif any(self.path.endswith(f"/{j}") or self.path == f"/{j}" for j in ["swarm-events.json", "swarm-test-results.json", "sse-decisions.json", "github-integration-matrix.json"]):
+            filename = os.path.basename(self.path)
+            json_file = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "visual", filename)
+            if os.path.exists(json_file):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                with open(json_file, "rb") as f:
+                    self.wfile.write(f.read())
+            else:
+                self.send_response(404)
+                self.end_headers()
         elif self.path.startswith("/api/fabric/launch-visual") or self.path.startswith("/api/launch-visual"):
             parsed_url = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_url.query)
@@ -1181,6 +1221,29 @@ class KokoroHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps(briefing_data).encode("utf-8"))
+            return
+
+        if self.path in ("/api/swarm/execute", "/api/swarm"):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body_bytes = self.rfile.read(content_length)
+            try:
+                data = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+            except Exception:
+                data = {}
+            query_str = data.get("query") or data.get("command") or data.get("text") or data.get("goal") or ""
+            if swarm_orchestrator:
+                swarm_res = swarm_orchestrator.execute_user_request(query_str)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(swarm_res).encode("utf-8"))
+            else:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": False, "error": "Swarm Orchestrator not loaded"}).encode("utf-8"))
             return
 
         if self.path in ("/api/agent/plan/execute", "/api/plan/execute"):

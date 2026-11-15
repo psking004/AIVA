@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from sse.ingestion.telemetry_bridge import TelemetryBridge
-from sse.storage.hardened_ledger import HardenedLedger
+# HardenedLedger imported lazily in sync_append to avoid circular dependency with sse.storage
 from sse.swarm.agents.auditor import SecurityAuditorAgent
 from sse.swarm.contracts import SwarmWorkspaceState, TaskStatus
 from sse.swarm.security_sandbox import HardenedProcessExecutor, SandboxedWorkspaceGuard
@@ -165,6 +165,7 @@ class MeshActionDispatcher:
             },
         }
 
+        from sse.storage.hardened_ledger import HardenedLedger
         if isinstance(self.ledger, HardenedLedger):
             self.ledger.atomic_append_record(record_data)
         else:

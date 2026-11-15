@@ -54,3 +54,4 @@ graph TD
 ### Cloud Anchor (`aiva-cloud`) — Render Recovery
 - **Host:** `https://aiva-yitg.onrender.com`
 - **Role:** Fallback intelligence engine and state anchor when workstation nodes are offline.
+

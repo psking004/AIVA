@@ -55,3 +55,4 @@ sequenceDiagram
 2. **Hot Disconnect Fallback:** If AirPods disconnect mid-sentence, output seamlessly falls back to the phone loudspeaker without crashing or dropping background wake-word detection.
 3. **Incoming Call Hand-off:** Yields immediately when `audioManager.mode == AudioManager.MODE_IN_CALL`.
 4. **Silent & Vibrate Mode:** Voice replies are muted if the device ringer is set to `RINGER_MODE_SILENT` unless explicitly triggered by touch.
+

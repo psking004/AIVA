@@ -69,3 +69,4 @@
 2. **Audio Focus Isolation:** YouTube, Spotify, and phone calls remain uninterrupted during wake-word detection and passive listening.
 3. **Multi-Subnet Resiliency:** Nodes seamlessly discovered each other when moving from historical `10.84.73.x` to the active `10.16.177.x` subnet.
 4. **Autonomous Harness:** Full test harness verified 8/8 stages passing with zero human intervention.
+
