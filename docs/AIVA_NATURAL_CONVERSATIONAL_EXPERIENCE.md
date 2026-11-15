@@ -115,3 +115,4 @@ All 8 stages of `scripts/autonomous_hardware_test.ps1` continue to execute with 
 - Conversational Engine: `packages/conversational/`
 - Service Daemon: `apps/desktop/kokoro-service.py`
 - Personality Spec: `backend/src/ai/personality/aiva-personality.ts`
+

@@ -59,3 +59,4 @@
   - `VerificationSubagent`: Validates physical disk state transitions before certifying task completion.
   - `packages/swarm/`: Implemented full 14-specialist agent registry with least-privilege permission grants, structured contracts, and multi-strategy schedulers inspired by ECC's agent catalog.
 * **Known Differences:** Implemented natively in Python without Node.js global wrapper bloat, seamlessly operating within AIVA's distributed multi-node architecture.
+

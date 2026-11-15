@@ -54,3 +54,4 @@ Prior to this integration milestone, AIVA's active runtime daemon (`apps/desktop
 1. **Integration Adapter (`packages/swarm/adapters/sse_adapter.py`):** Typed schema adapter providing `plan_strategic_intent()`, `evaluate_scenario_utility()`, `resolve_compute_deadlock()`, and `evaluate_outcome()`.
 2. **Pipeline Wiring:** Connect `apps/desktop/kokoro-service.py` to invoke the SSE adapter on complex multi-step queries while retaining pure fast-path routing for conversational single-step queries.
 3. **Deterministic Fallback:** Ensure that if SSE solvers or native dependencies are unavailable, the system transparently falls back to `sse_standalone.py` sovereign rules without crashing.
+

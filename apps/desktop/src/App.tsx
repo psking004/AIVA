@@ -162,6 +162,8 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const isInputFocusedRef = useRef(false);
   const lastPlayedTtsKeyRef = useRef<string | null>(null);
+  const playbackSessionRef = useRef<number>(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Mouse ignore control
   const handleMouseEnterInteractive = () => {
@@ -289,10 +291,32 @@ export default function App() {
     };
   }, [visualState]);
 
-  // Audio Playback with real-time lip-sync driving (Kokoro af_heart)
-  const playAudioTTS = async (text: string, turnId?: string, responseHash?: string) => {
+  // Instant Interruption (Barge-in): Cancels active playback, pending TTS synthesis, and resets to LISTENING
+  const interruptPlayback = () => {
+    playbackSessionRef.current += 1;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (activeAudioElRef.current) {
+      activeAudioElRef.current.pause();
+      activeAudioElRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setAudioLevel(0);
+    setActiveViseme('base');
+    setVisualState('LISTENING');
+    window.electronAPI?.notifyVoiceLifecycle?.('LISTENING');
+    resetDormancyTimer(8000);
+  };
+
+  // Audio Playback with real-time lip-sync driving (Kokoro af_bella @ 1.05) & clause streaming
+  const playAudioTTS = async (text: string, turnId?: string, responseHash?: string, meta?: ChatResponseMeta) => {
     const cleanText = (text || '').trim();
     if (!cleanText || !audioEnabled) {
+      if (meta) setLatestResponse(meta);
       setTimeout(() => dismissAiva(), 1200);
       return;
     }
@@ -305,7 +329,17 @@ export default function App() {
     }
     lastPlayedTtsKeyRef.current = ttsKey;
 
-    // Immediately stop and cancel any active audio before starting new playback
+    // Invalidate prior playback sessions
+    playbackSessionRef.current += 1;
+    const currentSessionId = playbackSessionRef.current;
+
+    // Cancel active audio & abort pending in-flight synthesis
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     if (activeAudioElRef.current) {
       activeAudioElRef.current.pause();
       activeAudioElRef.current = null;
@@ -316,159 +350,127 @@ export default function App() {
 
     setVisualState('SPEAKING');
 
-    // 0. Check pre-cached audio for instant <5ms playback (Section 9)
-    try {
-      const cachedUri = await window.electronAPI?.getPrecachedAudio?.(cleanText);
-      if (cachedUri) {
-        console.log(`[TTS] Instant playback from pre-cached audio for: "${cleanText}"`);
-        const audio = new Audio(cachedUri);
-        activeAudioElRef.current = audio;
+    // Split text into clauses/sentences for low-latency incremental playback
+    const rawClauses = cleanText.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
+    const clauses = rawClauses && rawClauses.length > 0
+      ? rawClauses.map((c) => c.trim()).filter(Boolean)
+      : [cleanText];
 
-        let phase = 0;
-        const tickLipSync = () => {
-          if (!audio.paused && !audio.ended) {
-            phase += 0.22;
-            const simulatedLevel = 0.2 + Math.abs(Math.sin(phase)) * 0.65;
-            setAudioLevel(simulatedLevel);
-
-            if (simulatedLevel < 0.25) setActiveViseme('slight');
-            else if (simulatedLevel < 0.52) setActiveViseme('mid');
-            else if (simulatedLevel < 0.78) setActiveViseme('wide');
-            else setActiveViseme('o');
-
-            audioAnimationRef.current = requestAnimationFrame(tickLipSync);
-          } else {
-            setAudioLevel(0);
-            setActiveViseme('base');
-          }
-        };
-
-        audio.onplay = () => {
-          audioAnimationRef.current = requestAnimationFrame(tickLipSync);
-        };
-
-        audio.onended = () => {
-          activeAudioElRef.current = null;
-          setAudioLevel(0);
-          setActiveViseme('base');
-          setVisualState('COOLDOWN');
-          setTimeout(() => dismissAiva(), 1000);
-        };
-
-        audio.onerror = () => {
-          activeAudioElRef.current = null;
-          setAudioLevel(0);
-          setActiveViseme('base');
-          setVisualState('COOLDOWN');
-          setTimeout(() => dismissAiva(), 800);
-        };
-
-        await audio.play();
-        return;
+    let hasRevealedText = false;
+    const revealText = () => {
+      if (!hasRevealedText && meta) {
+        hasRevealedText = true;
+        setLatestResponse(meta);
       }
-    } catch (_) {}
+    };
 
-    // 1. Attempt Kokoro local TTS daemon on port 5050
+    // Synthesizer helper for a single clause
+    const fetchClauseAudioUrl = async (clause: string): Promise<string | null> => {
+      // Check pre-cached audio (<5ms)
+      try {
+        const cachedUri = await window.electronAPI?.getPrecachedAudio?.(clause);
+        if (cachedUri) return cachedUri;
+      } catch (_) {}
+
+      // Fetch from local Kokoro daemon on port 5050
+      try {
+        const res = await fetch('http://127.0.0.1:5050/synthesize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: clause, voice: 'af_bella', speed: 1.05 }),
+          signal: abortController.signal,
+        });
+        if (res.ok) {
+          const blob = await res.blob();
+          return URL.createObjectURL(blob);
+        }
+      } catch (_) {}
+      return null;
+    };
+
     try {
-      const kokoroRes = await fetch('http://127.0.0.1:5050/synthesize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: cleanText, voice: 'af_heart', speed: 1.0 }),
-        signal: AbortSignal.timeout(35000),
-      });
+      for (let i = 0; i < clauses.length; i++) {
+        if (playbackSessionRef.current !== currentSessionId) return;
 
-      if (kokoroRes.ok) {
-        const blob = await kokoroRes.blob();
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        activeAudioElRef.current = audio;
+        const clause = clauses[i];
+        const audioUrl = await fetchClauseAudioUrl(clause);
 
-        // Drive visemes from audio playback
-        let phase = 0;
-        const tickLipSync = () => {
-          if (!audio.paused && !audio.ended) {
-            phase += 0.22;
-            const simulatedLevel = 0.2 + Math.abs(Math.sin(phase)) * 0.65;
-            setAudioLevel(simulatedLevel);
+        if (playbackSessionRef.current !== currentSessionId) {
+          if (audioUrl && audioUrl.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
+          return;
+        }
 
-            if (simulatedLevel < 0.25) setActiveViseme('slight');
-            else if (simulatedLevel < 0.52) setActiveViseme('mid');
-            else if (simulatedLevel < 0.78) setActiveViseme('wide');
-            else setActiveViseme('o');
+        if (!audioUrl) {
+          // If Kokoro synthesis is unavailable, reveal text and try fallback
+          revealText();
+          continue;
+        }
 
-            audioAnimationRef.current = requestAnimationFrame(tickLipSync);
-          } else {
-            setAudioLevel(0);
-            setActiveViseme('base');
+        // Play the clause audio with synchronized lip-sync
+        await new Promise<void>((resolve) => {
+          if (playbackSessionRef.current !== currentSessionId) {
+            if (audioUrl.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
+            return resolve();
           }
-        };
 
-        audio.onplay = () => {
-          audioAnimationRef.current = requestAnimationFrame(tickLipSync);
-        };
+          const audio = new Audio(audioUrl);
+          activeAudioElRef.current = audio;
 
-        audio.onended = () => {
-          URL.revokeObjectURL(audioUrl);
-          activeAudioElRef.current = null;
-          setAudioLevel(0);
-          setActiveViseme('base');
-          setVisualState('COOLDOWN');
-          setTimeout(() => dismissAiva(), 1000);
-        };
+          let phase = 0;
+          const tickLipSync = () => {
+            if (!audio.paused && !audio.ended && playbackSessionRef.current === currentSessionId) {
+              phase += 0.22;
+              const simulatedLevel = 0.2 + Math.abs(Math.sin(phase)) * 0.65;
+              setAudioLevel(simulatedLevel);
 
-        audio.onerror = () => {
-          URL.revokeObjectURL(audioUrl);
-          activeAudioElRef.current = null;
-          setAudioLevel(0);
-          setActiveViseme('base');
-          setVisualState('COOLDOWN');
-          setTimeout(() => dismissAiva(), 800);
-        };
+              if (simulatedLevel < 0.25) setActiveViseme('slight');
+              else if (simulatedLevel < 0.52) setActiveViseme('mid');
+              else if (simulatedLevel < 0.78) setActiveViseme('wide');
+              else setActiveViseme('o');
 
-        await audio.play();
-        return;
+              audioAnimationRef.current = requestAnimationFrame(tickLipSync);
+            } else {
+              setAudioLevel(0);
+              setActiveViseme('base');
+            }
+          };
+
+          audio.onplay = () => {
+            // Text-to-audio gap is 0ms: reveal text at the exact instant speech starts!
+            revealText();
+            audioAnimationRef.current = requestAnimationFrame(tickLipSync);
+          };
+
+          audio.onended = () => {
+            if (audioUrl.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
+            activeAudioElRef.current = null;
+            resolve();
+          };
+
+          audio.onerror = () => {
+            if (audioUrl.startsWith('blob:')) URL.revokeObjectURL(audioUrl);
+            activeAudioElRef.current = null;
+            resolve();
+          };
+
+          audio.play().catch(() => resolve());
+        });
+      }
+
+      // If speech finished without being interrupted
+      if (playbackSessionRef.current === currentSessionId) {
+        revealText();
+        setAudioLevel(0);
+        setActiveViseme('base');
+        setVisualState('COOLDOWN');
+        setTimeout(() => {
+          if (playbackSessionRef.current === currentSessionId) {
+            dismissAiva();
+          }
+        }, 1000);
       }
     } catch (_) {
-      // Local TTS connection notice
-    }
-
-    // 2. Web Speech API fallback
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 1.0;
-        utterance.pitch = 1.0;
-
-        let phase = 0;
-        const intervalId = setInterval(() => {
-          phase += 0.28;
-          const level = 0.2 + Math.abs(Math.sin(phase)) * 0.6;
-          setAudioLevel(level);
-          if (level < 0.25) setActiveViseme('slight');
-          else if (level < 0.55) setActiveViseme('mid');
-          else setActiveViseme('wide');
-        }, 120);
-
-        utterance.onend = () => {
-          clearInterval(intervalId);
-          setAudioLevel(0);
-          setActiveViseme('base');
-          setTimeout(() => dismissAiva(), 1000);
-        };
-
-        utterance.onerror = () => {
-          clearInterval(intervalId);
-          setAudioLevel(0);
-          setActiveViseme('base');
-          setTimeout(() => dismissAiva(), 800);
-        };
-
-        window.speechSynthesis.speak(utterance);
-      } catch (_) {
-        setTimeout(() => dismissAiva(), 800);
-      }
-    } else {
+      revealText();
       setTimeout(() => dismissAiva(), 800);
     }
   };
@@ -499,8 +501,7 @@ export default function App() {
             latencyMs: data.latencyMs || latencyMs,
           };
 
-          setLatestResponse(meta);
-          playAudioTTS(replyText, data.turnId || clientTurnId, data.responseHash);
+          playAudioTTS(replyText, data.turnId || clientTurnId, data.responseHash, meta);
         } else {
           const errText = res.error || 'Failed to process directive.';
           setLatestResponse({
@@ -540,10 +541,10 @@ export default function App() {
           dismissAiva();
         }
       } else if (e.key === ' ' || e.key === 'Spacebar') {
-        // Spacebar barge-in interruption terminates speech playback immediately
+        // Spacebar barge-in interruption returns avatar to LISTENING immediately
         if (visualState === 'SPEAKING') {
           e.preventDefault();
-          dismissAiva();
+          interruptPlayback();
         }
       } else if (e.ctrlKey && (e.key === 't' || e.key === 'T')) {
         e.preventDefault();
@@ -625,13 +626,13 @@ export default function App() {
     if (window.electronAPI.onAiResponse) {
       unsubAiResponse = window.electronAPI.onAiResponse((data: any) => {
         const replyText = data.response || 'Directive executed.';
-        setLatestResponse({
+        const meta: ChatResponseMeta = {
           content: replyText,
           target: data.target || 'PC Local',
           model: data.model || 'AIVA Core',
           latencyMs: data.latencyMs || 0,
-        });
-        playAudioTTS(replyText, data.turnId, data.responseHash);
+        };
+        playAudioTTS(replyText, data.turnId, data.responseHash, meta);
       });
     }
 
@@ -639,16 +640,7 @@ export default function App() {
     let unsubInterrupted: (() => void) | undefined;
     if (window.electronAPI.onVoiceInterrupted) {
       unsubInterrupted = window.electronAPI.onVoiceInterrupted(() => {
-        if (activeAudioElRef.current) {
-          activeAudioElRef.current.pause();
-          activeAudioElRef.current = null;
-        }
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          window.speechSynthesis.cancel();
-        }
-        setAudioLevel(0);
-        setActiveViseme('base');
-        dismissAiva();
+        interruptPlayback();
       });
     }
 

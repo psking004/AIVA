@@ -19,6 +19,29 @@
 delete process.env.ELECTRON_RUN_AS_NODE;
 
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, screen } = require('electron');
+
+// Single-instance enforcement: exactly ONE AIVA application instance allowed (Phase 2 & Phase 4)
+const gotTheSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotTheSingleInstanceLock) {
+  console.log('[SINGLE_INSTANCE] Another instance of AIVA Desktop is already active. Exiting immediately.');
+  app.quit();
+  process.exit(0);
+}
+
+app.on('second-instance', (_event, _commandLine, _workingDirectory) => {
+  console.log('[SINGLE_INSTANCE] Second instance attempted launch. Restoring primary instance.');
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+    // Wake existing holographic interface into LISTENING state
+    setAssistantState('MATERIALIZING');
+  }
+});
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -1162,6 +1185,15 @@ function killOrphanedSpeechListeners() {
   } catch (_) {}
 }
 
+function killOrphanedWhisperProcesses() {
+  try {
+    if (process.platform === 'win32') {
+      execSync('powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like \\"*whisper-service.py*\\" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"', { timeout: 4000 });
+      logEvent('info', '[MIC] Cleaned up orphaned whisper-service processes');
+    }
+  } catch (_) {}
+}
+
 // 6b. VOICE SUBSYSTEMS (NATIVE WAKE-WORD, WHISPER STT, KOKORO TTS)
 function startSpeechRecognition() {
   if (speechProcess && !speechProcess.killed) {
@@ -1253,6 +1285,9 @@ function startWhisperSTT() {
     return;
   }
 
+  // Singular microphone ownership: clean up any orphaned whisper processes first
+  killOrphanedWhisperProcesses();
+
   const scriptPath = getScriptPath('whisper-service.py');
   if (!fs.existsSync(scriptPath)) {
     logEvent('warn', 'whisper-service.py not found: ' + scriptPath);
@@ -1343,12 +1378,8 @@ function startWhisperSTT() {
   });
 }
 
-function startKokoroTTS() {
-  if (kokoroProcess && !kokoroProcess.killed) {
-    logEvent('info', `Kokoro TTS daemon already running (PID: ${kokoroProcess.pid})`);
-    return;
-  }
-
+function spawnKokoroProcess() {
+  if (kokoroProcess && !kokoroProcess.killed) return;
   const scriptPath = getScriptPath('kokoro-service.py');
   if (!fs.existsSync(scriptPath)) {
     logEvent('warn', 'kokoro-service.py not found: ' + scriptPath);
@@ -1400,6 +1431,30 @@ function startKokoroTTS() {
       setTimeout(startKokoroTTS, 5000);
     }
   });
+}
+
+function startKokoroTTS() {
+  if (kokoroProcess && !kokoroProcess.killed) {
+    logEvent('info', `Kokoro TTS daemon already running (PID: ${kokoroProcess.pid})`);
+    return;
+  }
+
+  // Pre-check if an existing daemon is already responding on port 5050 to avoid duplicate processes
+  fetch('http://127.0.0.1:5050/health')
+    .then((res) => {
+      if (res.ok) {
+        if (!isKokoroReady) {
+          isKokoroReady = true;
+          logEvent('info', 'Reusing active Kokoro TTS daemon on http://127.0.0.1:5050');
+          warmupTtsCache('http://127.0.0.1:5050', (msg) => logEvent('info', msg)).catch(() => {});
+        }
+      } else {
+        spawnKokoroProcess();
+      }
+    })
+    .catch(() => {
+      spawnKokoroProcess();
+    });
 
   // Health check verification probe (polls every 1.5s up to 20 times)
   let probeAttempts = 0;
@@ -1438,6 +1493,13 @@ function configureAutoStart(enable = true) {
 }
 
 function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (!mainWindow.isVisible()) mainWindow.show();
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    return mainWindow;
+  }
+
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height, x, y } = primaryDisplay.workArea;
 

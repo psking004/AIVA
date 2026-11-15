@@ -50,8 +50,8 @@ try {
     $sre = New-Object System.Speech.Recognition.SpeechRecognitionEngine
     $sre.SetInputToDefaultAudioDevice()
 
-    # Wake word choices: strictly "AIVA" and "Hey AIVA" (Section 4 & 5: "Ava" completely removed)
-    $wakePhrases = @("AIVA", "Hey AIVA")
+    # Wake word choices: robust phonetic recognition for "AIVA" and "Hey AIVA"
+    $wakePhrases = @("AIVA", "Hey AIVA", "Aiva", "Hey Aiva", "Iva", "Hey Iva")
     $wakeChoices = New-Object System.Speech.Recognition.Choices
     $wakeChoices.Add([string[]]$wakePhrases)
 
