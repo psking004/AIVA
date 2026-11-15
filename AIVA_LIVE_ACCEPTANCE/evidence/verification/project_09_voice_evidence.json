@@ -1,0 +1,14 @@
+{
+  "project_name": "PROJECT_09_VOICE_TESTING",
+  "measurements": {
+    "wake_detection_latency_ms": 0.049,
+    "english_turn_latency_ms": 1905.29,
+    "tanglish_turn_latency_ms": 1814.29,
+    "context_followup_latency_ms": 1814.57,
+    "kokoro_tts_synthesis_ms": 4149.47,
+    "audio_bytes_returned": 127020,
+    "barge_in_cancellation_latency_ms": 0.101,
+    "barge_in_successful": true
+  },
+  "verification_status": "PASS"
+}
