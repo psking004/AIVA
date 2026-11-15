@@ -20,8 +20,20 @@ import soundfile as sf
 # Strategic Systems Engine (SSE) & Swarm Engine Dynamic Imports
 try:
     _repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    _repo_candidates = [
+        _repo_root,
+        r"C:\Users\bhara\AIVA",
+        os.getcwd()
+    ]
+    for _rc in _repo_candidates:
+        if os.path.exists(os.path.join(_rc, "packages", "conversational")):
+            _repo_root = _rc
+            if _rc not in sys.path:
+                sys.path.insert(0, _rc)
+            break
     if _repo_root not in sys.path:
         sys.path.insert(0, _repo_root)
+
     _sse_path = os.path.abspath(os.path.join(_repo_root, "packages", "sse"))
     if _sse_path not in sys.path:
         sys.path.insert(0, _sse_path)
@@ -30,13 +42,18 @@ try:
     swarm_orchestrator = SwarmOrchestrator(
         telemetry_export_path=os.path.join(_repo_root, "docs", "visual", "swarm-events.json")
     )
-    print("[KokoroDaemon] Strategic Systems Engine (SSE) & Swarm Orchestrator (14 specialist agents) loaded.")
+    from packages.conversational import ConversationEngine, BargeInController
+    conversation_engine = ConversationEngine()
+    barge_in_controller = BargeInController()
+    print("[KokoroDaemon] Strategic Systems Engine (SSE), Swarm Orchestrator, & Conversational Engine loaded.")
 except Exception as _sse_err:
-    print(f"[KokoroDaemon] SSE/Swarm load note: {_sse_err}")
+    print(f"[KokoroDaemon] SSE/Swarm/Conversational load note: {_sse_err}")
     evaluate_strategic_intent = None
     dynamic_sse_planner = None
     DynamicUIAgent = None
     swarm_orchestrator = None
+    conversation_engine = None
+    barge_in_controller = None
 
 # Resilient Kokoro model path resolution
 def resolve_models_dir():
@@ -1246,6 +1263,15 @@ class KokoroHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"success": False, "error": "Swarm Orchestrator not loaded"}).encode("utf-8"))
             return
 
+        if self.path in ("/api/voice/interrupt", "/api/barge-in", "/api/interrupt"):
+            interrupted = barge_in_controller.trigger_interruption() if barge_in_controller else True
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "interrupted": interrupted, "spokenResponse": "Listening..."}).encode("utf-8"))
+            return
+
         if self.path in ("/api/agent/plan/execute", "/api/plan/execute"):
             content_length = int(self.headers.get("Content-Length", 0))
             body_bytes = self.rfile.read(content_length)
@@ -1431,6 +1457,34 @@ class KokoroHandler(BaseHTTPRequestHandler):
             # already imported globally: os, sys, subprocess, socket
 
             sys.stderr.write(f"[REMOTE-EXEC] target={target}, action={action}, app='{application}', query='{query}'\n")
+
+            clean_input = (query or text or command).strip()
+            is_explicit_tool = action in (
+                "CREATE_FILE", "TYPE_TEXT", "START_DICTATION", "STOP_DICTATION",
+                "OPEN_APP", "CLOSE_APP", "MODIFY_FILE", "READ_FILE", "EXECUTE_SHELL",
+                "INSTALL_APP", "BRIEFING", "FABRIC_BRIEFING", "GET_BRIEFING",
+                "START_SERVICE", "BOOT_OLLAMA", "BOOT", "START", "BUILD", "TEST", "CODE", "EXEC",
+                "SSE_VERIFY", "VERIFY_SSE", "SSE"
+            )
+            is_ping = clean_input.upper() in ("PING", "HEALTH", "STATUS") or action == "PING"
+
+            # Natural Human-Like Conversational Handling (English, Tamil, Tanglish)
+            if not is_explicit_tool and not is_ping and clean_input and conversation_engine:
+                conv_res = conversation_engine.process_utterance(clean_input, target_node=target)
+                res_data = {
+                    "success": True,
+                    "node": target if target in ("PC-A", "PC-B") else "PC-B",
+                    "status": "ONLINE",
+                    "intent": conv_res["intent"],
+                    "language": conv_res["language"],
+                    "spokenResponse": conv_res["spoken_response"]
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(res_data).encode("utf-8"))
+                return
 
             # 1. Action: CREATE_FILE (Pure Blank File + Auto-Launch)
             if action == "CREATE_FILE":
